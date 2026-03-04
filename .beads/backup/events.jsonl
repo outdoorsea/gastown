@@ -1241,3 +1241,122 @@
 {"actor":"meety_me/witness","comment":"Added label: from:meety_me/witness","created_at":"2026-03-04T15:01:43Z","event_type":"label_added","id":1427,"issue_id":"hq-e5vk","new_value":null,"old_value":null}
 {"actor":"meety_me/witness","comment":"Added label: gt:message","created_at":"2026-03-04T15:01:43Z","event_type":"label_added","id":1428,"issue_id":"hq-e5vk","new_value":null,"old_value":null}
 {"actor":"meety_me/witness","comment":null,"created_at":"2026-03-04T15:01:43Z","event_type":"status_changed","id":1429,"issue_id":"hq-e5vk","new_value":"{\"assignee\":\"meety_me/witness\",\"status\":\"hooked\"}","old_value":"{\"id\":\"hq-e5vk\",\"title\":\"🤝 HANDOFF: Witness patrol\",\"description\":\"Completed 15 patrols. Rig state: 2 persistent polecats (chrome/nitro idle after completing analysis tasks, mm-ktr+mm-05a closed). Analysis files at .specs/analysis-arch.md and analysis-sec.md. Security review flagged 3 blocking issues. Deacon alive, refinery running. No timer gates, no swarms, no incidents. 10 old mails in inbox (all routine handoffs).\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"assignee\":\"meety_me/witness\",\"owner\":\"jeremy@theirish.com\",\"created_at\":\"2026-03-04T23:01:44Z\",\"created_by\":\"meety_me/witness\",\"updated_at\":\"2026-03-04T23:01:44Z\"}"}
+{"actor":"daemon","comment":null,"created_at":"2026-03-04T15:03:55Z","event_type":"created","id":1430,"issue_id":"hq-dg8o","new_value":"","old_value":""}
+{"actor":"daemon","comment":"Added label: gt:message","created_at":"2026-03-04T15:03:55Z","event_type":"label_added","id":1431,"issue_id":"hq-dg8o","new_value":null,"old_value":null}
+{"actor":"daemon","comment":"Added label: from:daemon","created_at":"2026-03-04T15:03:55Z","event_type":"label_added","id":1432,"issue_id":"hq-dg8o","new_value":null,"old_value":null}
+{"actor":"daemon","comment":"Added label: delivery:pending","created_at":"2026-03-04T15:03:55Z","event_type":"label_added","id":1433,"issue_id":"hq-dg8o","new_value":null,"old_value":null}
+{"actor":"daemon","comment":"Added label: thread:thread-6da44c612e2c","created_at":"2026-03-04T15:03:55Z","event_type":"label_added","id":1434,"issue_id":"hq-dg8o","new_value":null,"old_value":null}
+{"actor":"daemon","comment":null,"created_at":"2026-03-04T15:07:19Z","event_type":"created","id":1435,"issue_id":"hq-giw5","new_value":"","old_value":""}
+{"actor":"daemon","comment":"Added label: gt:message","created_at":"2026-03-04T15:07:19Z","event_type":"label_added","id":1436,"issue_id":"hq-giw5","new_value":null,"old_value":null}
+{"actor":"daemon","comment":"Added label: from:daemon","created_at":"2026-03-04T15:07:19Z","event_type":"label_added","id":1437,"issue_id":"hq-giw5","new_value":null,"old_value":null}
+{"actor":"daemon","comment":"Added label: delivery:pending","created_at":"2026-03-04T15:07:19Z","event_type":"label_added","id":1438,"issue_id":"hq-giw5","new_value":null,"old_value":null}
+{"actor":"daemon","comment":"Added label: thread:thread-d3b0be070689","created_at":"2026-03-04T15:07:19Z","event_type":"label_added","id":1439,"issue_id":"hq-giw5","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:23Z","event_type":"created","id":1440,"issue_id":"hq-e047","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:23Z","event_type":"label_added","id":1441,"issue_id":"hq-e047","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:23Z","event_type":"label_added","id":1442,"issue_id":"hq-e047","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:23Z","event_type":"created","id":1443,"issue_id":"hq-whsm","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:23Z","event_type":"label_added","id":1444,"issue_id":"hq-whsm","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:23Z","event_type":"label_added","id":1445,"issue_id":"hq-whsm","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:23Z","event_type":"created","id":1446,"issue_id":"hq-cvsa","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:23Z","event_type":"label_added","id":1447,"issue_id":"hq-cvsa","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:23Z","event_type":"label_added","id":1448,"issue_id":"hq-cvsa","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:23Z","event_type":"created","id":1449,"issue_id":"hq-xldb","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:23Z","event_type":"label_added","id":1450,"issue_id":"hq-xldb","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1451,"issue_id":"hq-xldb","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:24Z","event_type":"created","id":1452,"issue_id":"hq-h74g","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1453,"issue_id":"hq-h74g","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1454,"issue_id":"hq-h74g","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:24Z","event_type":"created","id":1455,"issue_id":"hq-bwff","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1456,"issue_id":"hq-bwff","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1457,"issue_id":"hq-bwff","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:24Z","event_type":"created","id":1458,"issue_id":"hq-4csu","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1459,"issue_id":"hq-4csu","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1460,"issue_id":"hq-4csu","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:24Z","event_type":"created","id":1461,"issue_id":"hq-6m7s","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1462,"issue_id":"hq-6m7s","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1463,"issue_id":"hq-6m7s","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:24Z","event_type":"created","id":1464,"issue_id":"hq-cuey","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1465,"issue_id":"hq-cuey","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1466,"issue_id":"hq-cuey","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:24Z","event_type":"created","id":1467,"issue_id":"hq-fvgp","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1468,"issue_id":"hq-fvgp","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1469,"issue_id":"hq-fvgp","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:24Z","event_type":"created","id":1470,"issue_id":"hq-f6pb","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1471,"issue_id":"hq-f6pb","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1472,"issue_id":"hq-f6pb","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:24Z","event_type":"created","id":1473,"issue_id":"hq-iequ","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1474,"issue_id":"hq-iequ","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:24Z","event_type":"label_added","id":1475,"issue_id":"hq-iequ","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:25Z","event_type":"created","id":1476,"issue_id":"hq-0jba","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1477,"issue_id":"hq-0jba","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1478,"issue_id":"hq-0jba","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:25Z","event_type":"created","id":1479,"issue_id":"hq-szv4","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1480,"issue_id":"hq-szv4","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1481,"issue_id":"hq-szv4","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:25Z","event_type":"created","id":1482,"issue_id":"hq-1xqz","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1483,"issue_id":"hq-1xqz","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1484,"issue_id":"hq-1xqz","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:25Z","event_type":"created","id":1485,"issue_id":"hq-n6py","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1486,"issue_id":"hq-n6py","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1487,"issue_id":"hq-n6py","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:25Z","event_type":"created","id":1488,"issue_id":"hq-ak4g","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1489,"issue_id":"hq-ak4g","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1490,"issue_id":"hq-ak4g","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:25Z","event_type":"created","id":1491,"issue_id":"hq-1x0k","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1492,"issue_id":"hq-1x0k","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1493,"issue_id":"hq-1x0k","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:25Z","event_type":"created","id":1494,"issue_id":"hq-21w3","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1495,"issue_id":"hq-21w3","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1496,"issue_id":"hq-21w3","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:25Z","event_type":"created","id":1497,"issue_id":"hq-49dd","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1498,"issue_id":"hq-49dd","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1499,"issue_id":"hq-49dd","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:25Z","event_type":"created","id":1500,"issue_id":"hq-ct0q","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1501,"issue_id":"hq-ct0q","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:25Z","event_type":"label_added","id":1502,"issue_id":"hq-ct0q","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:26Z","event_type":"created","id":1503,"issue_id":"hq-i9kk","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1504,"issue_id":"hq-i9kk","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1505,"issue_id":"hq-i9kk","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:26Z","event_type":"created","id":1506,"issue_id":"hq-9ba0","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1507,"issue_id":"hq-9ba0","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1508,"issue_id":"hq-9ba0","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:26Z","event_type":"created","id":1509,"issue_id":"hq-810q","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1510,"issue_id":"hq-810q","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1511,"issue_id":"hq-810q","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:26Z","event_type":"created","id":1512,"issue_id":"hq-61md","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1513,"issue_id":"hq-61md","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1514,"issue_id":"hq-61md","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:26Z","event_type":"created","id":1515,"issue_id":"hq-vyy7","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1516,"issue_id":"hq-vyy7","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1517,"issue_id":"hq-vyy7","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:26Z","event_type":"created","id":1518,"issue_id":"hq-bu5k","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1519,"issue_id":"hq-bu5k","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1520,"issue_id":"hq-bu5k","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:26Z","event_type":"created","id":1521,"issue_id":"hq-bteu","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1522,"issue_id":"hq-bteu","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1523,"issue_id":"hq-bteu","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:26Z","event_type":"created","id":1524,"issue_id":"hq-a7b4","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1525,"issue_id":"hq-a7b4","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1526,"issue_id":"hq-a7b4","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:26Z","event_type":"created","id":1527,"issue_id":"hq-wcp3","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1528,"issue_id":"hq-wcp3","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:26Z","event_type":"label_added","id":1529,"issue_id":"hq-wcp3","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:08:27Z","event_type":"created","id":1530,"issue_id":"hq-are5","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: ci-failure","created_at":"2026-03-04T15:08:27Z","event_type":"label_added","id":1531,"issue_id":"hq-are5","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:vitalitek","created_at":"2026-03-04T15:08:27Z","event_type":"label_added","id":1532,"issue_id":"hq-are5","new_value":null,"old_value":null}
+{"actor":"deacon/","comment":null,"created_at":"2026-03-04T15:11:19Z","event_type":"created","id":1533,"issue_id":"hq-np1g","new_value":"","old_value":""}
+{"actor":"deacon/","comment":"Added label: from:deacon/","created_at":"2026-03-04T15:11:19Z","event_type":"label_added","id":1534,"issue_id":"hq-np1g","new_value":null,"old_value":null}
+{"actor":"deacon/","comment":"Added label: gt:message","created_at":"2026-03-04T15:11:19Z","event_type":"label_added","id":1535,"issue_id":"hq-np1g","new_value":null,"old_value":null}
+{"actor":"deacon","comment":null,"created_at":"2026-03-04T15:11:19Z","event_type":"status_changed","id":1536,"issue_id":"hq-np1g","new_value":"{\"assignee\":\"deacon/\",\"status\":\"hooked\"}","old_value":"{\"id\":\"hq-np1g\",\"title\":\"🤝 HANDOFF: Routine cycle\",\"description\":\"Completed 20 patrols, no incidents. Actions: (1) Killed orphan PID 11203 (25h stale polecat watcher). (2) Cleared stuck alpha dog from session-hygiene (4h hung). (3) Rotated logs: dolt.log 56M-\\u003e2.6M, daemon.log 3.1M-\\u003e452K. (4) Cleaned alpha orphan tmux 6 times (recurring bug: dogs leave orphan tmux after plugin completion). Status: 4/7 rigs operational (gastown docked, lilypad_chat down, wandering_river down). 17 agents active. Dolt 370MB healthy. Alpha idle+clean. Patrol hq-wisp-fqkiop hooked for next session.\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"assignee\":\"deacon/\",\"owner\":\"jeremy@theirish.com\",\"created_at\":\"2026-03-04T23:11:19Z\",\"created_by\":\"deacon/\",\"updated_at\":\"2026-03-04T23:11:19Z\"}"}
+{"actor":"deacon","comment":null,"created_at":"2026-03-04T15:11:38Z","event_type":"closed","id":1537,"issue_id":"hq-np1g","new_value":"Closed","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-04T15:13:13Z","event_type":"closed","id":1538,"issue_id":"hq-tm2u","new_value":"{\"notes\":\"Stale alert. Deacon is alive and patrolling (cycle hq-wisp-j6rjbl).\",\"status\":\"closed\"}","old_value":"{\"id\":\"hq-tm2u\",\"title\":\"[HIGH] Deacon (hq-deacon) session is dead. vitalitek witness detected at 2026-03-04T20:43Z during patrol 7. Refinery and rig appear healthy but deacon is not running.\",\"description\":\"Escalation ID: hq-wisp-dt7y06\\nSeverity: high\\nFrom: vitalitek/witness\\n\\n---\\nTo acknowledge: gt escalate ack hq-wisp-dt7y06\\nTo close: gt escalate close hq-wisp-dt7y06 --reason \\\"resolution\\\"\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"assignee\":\"mayor/\",\"owner\":\"jeremy@theirish.com\",\"created_at\":\"2026-03-04T20:31:20Z\",\"created_by\":\"vitalitek/witness\",\"updated_at\":\"2026-03-04T20:31:20Z\"}"}
+{"actor":"daemon","comment":null,"created_at":"2026-03-04T15:14:15Z","event_type":"created","id":1539,"issue_id":"hq-o7z1","new_value":"","old_value":""}
+{"actor":"daemon","comment":"Added label: gt:message","created_at":"2026-03-04T15:14:15Z","event_type":"label_added","id":1540,"issue_id":"hq-o7z1","new_value":null,"old_value":null}
+{"actor":"daemon","comment":"Added label: from:daemon","created_at":"2026-03-04T15:14:15Z","event_type":"label_added","id":1541,"issue_id":"hq-o7z1","new_value":null,"old_value":null}
+{"actor":"daemon","comment":"Added label: delivery:pending","created_at":"2026-03-04T15:14:15Z","event_type":"label_added","id":1542,"issue_id":"hq-o7z1","new_value":null,"old_value":null}
+{"actor":"daemon","comment":"Added label: thread:thread-684335f3c934","created_at":"2026-03-04T15:14:15Z","event_type":"label_added","id":1543,"issue_id":"hq-o7z1","new_value":null,"old_value":null}
+{"actor":"dog","comment":null,"created_at":"2026-03-04T15:15:55Z","event_type":"created","id":1544,"issue_id":"hq-1vuw","new_value":"","old_value":""}
+{"actor":"dog","comment":"Added label: type:plugin-run","created_at":"2026-03-04T15:15:55Z","event_type":"label_added","id":1545,"issue_id":"hq-1vuw","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: plugin:rebuild-gt","created_at":"2026-03-04T15:15:55Z","event_type":"label_added","id":1546,"issue_id":"hq-1vuw","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: rig:gastown","created_at":"2026-03-04T15:15:55Z","event_type":"label_added","id":1547,"issue_id":"hq-1vuw","new_value":null,"old_value":null}
+{"actor":"dog","comment":"Added label: result:success","created_at":"2026-03-04T15:15:55Z","event_type":"label_added","id":1548,"issue_id":"hq-1vuw","new_value":null,"old_value":null}
