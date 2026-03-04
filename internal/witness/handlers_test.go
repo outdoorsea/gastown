@@ -663,6 +663,73 @@ func TestGetAgentBeadLabels_NoBdAvailable(t *testing.T) {
 	}
 }
 
+func TestFetchAgentBead_NoBdAvailable(t *testing.T) {
+	t.Parallel()
+	// When bd is not available, fetchAgentBead should return nil without panicking
+	snap := fetchAgentBead(DefaultBdCli(), "/nonexistent", "nonexistent-bead")
+	if snap != nil {
+		t.Errorf("fetchAgentBead = %v, want nil when bd unavailable", snap)
+	}
+}
+
+func TestAgentBeadSnapshot_NilSafety(t *testing.T) {
+	t.Parallel()
+	// All methods on nil snapshot should return safe defaults without panicking
+	var snap *agentBeadSnapshot
+
+	state, hookBead := snap.state()
+	if state != "" || hookBead != "" {
+		t.Errorf("nil snap.state() = (%q, %q), want (\"\", \"\")", state, hookBead)
+	}
+
+	labels := snap.labels()
+	if labels != nil {
+		t.Errorf("nil snap.labels() = %v, want nil", labels)
+	}
+
+	age := snap.age()
+	if age != 24*time.Hour {
+		t.Errorf("nil snap.age() = %v, want 24h", age)
+	}
+
+	cs := snap.cleanupStatus()
+	if cs != "" {
+		t.Errorf("nil snap.cleanupStatus() = %q, want \"\"", cs)
+	}
+}
+
+func TestAgentBeadSnapshot_Methods(t *testing.T) {
+	t.Parallel()
+	snap := &agentBeadSnapshot{
+		AgentState:  "working",
+		HookBead:    "gt-abc",
+		Labels:      []string{"done-intent:COMPLETED:2025-01-01T00:00:00Z"},
+		UpdatedAt:   time.Now().Add(-5 * time.Minute).Format(time.RFC3339),
+		ActiveMR:    "gt-mr1",
+		Description: "cleanup_status: has_uncommitted",
+	}
+	// Manually set Fields since we're constructing directly
+	snap.Fields = &beads.AgentFields{CleanupStatus: "has_uncommitted"}
+
+	state, hookBead := snap.state()
+	if state != "working" || hookBead != "gt-abc" {
+		t.Errorf("snap.state() = (%q, %q), want (\"working\", \"gt-abc\")", state, hookBead)
+	}
+
+	if len(snap.labels()) != 1 {
+		t.Errorf("snap.labels() len = %d, want 1", len(snap.labels()))
+	}
+
+	age := snap.age()
+	if age < 4*time.Minute || age > 6*time.Minute {
+		t.Errorf("snap.age() = %v, want ~5m", age)
+	}
+
+	if snap.cleanupStatus() != "has_uncommitted" {
+		t.Errorf("snap.cleanupStatus() = %q, want \"has_uncommitted\"", snap.cleanupStatus())
+	}
+}
+
 // --- extractPolecatFromJSON tests (issue #1228: panic-safe JSON parsing) ---
 
 func TestExtractPolecatFromJSON_ValidOutput(t *testing.T) {
