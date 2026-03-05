@@ -41,6 +41,8 @@
 {"created_at":"2026-03-04T09:25:41Z","created_by":"mayor","depends_on_id":"external:lilypad_chat:lc-djd","issue_id":"hq-cv-xctpk","type":"tracks"}
 {"created_at":"2026-03-04T10:55:19Z","created_by":"mayor","depends_on_id":"external:lilypad_chat:lc-lk7","issue_id":"hq-cv-xisiy","type":"tracks"}
 {"created_at":"2026-03-04T12:32:19Z","created_by":"mayor","depends_on_id":"mm-46g","issue_id":"hq-cv-xuf","type":"tracks"}
+{"created_at":"2026-03-04T17:20:51Z","created_by":"mayor","depends_on_id":"mm-8vb","issue_id":"hq-cv-ybhaa","type":"tracks"}
+{"created_at":"2026-03-04T17:20:42Z","created_by":"mayor","depends_on_id":"mm-14k","issue_id":"hq-cv-yxrk6","type":"tracks"}
 {"created_at":"2026-03-04T10:35:31Z","created_by":"mayor","depends_on_id":"external:lilypad_chat:lc-3tr","issue_id":"hq-cv-zkb64","type":"tracks"}
 {"created_at":"2026-03-04T10:35:19Z","created_by":"mayor","depends_on_id":"external:lilypad_chat:lc-0jc","issue_id":"hq-cv-zle2i","type":"tracks"}
 {"created_at":"2026-03-03T16:35:59Z","created_by":"deacon","depends_on_id":"hq-wisp-tnlws","issue_id":"hq-p8uj","type":"parent-child"}
