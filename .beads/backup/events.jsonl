@@ -1855,3 +1855,45 @@
 {"actor":"deacon/","comment":"Added label: gt:message","created_at":"2026-03-05T04:03:02Z","event_type":"label_added","id":2106,"issue_id":"hq-4cwf","new_value":null,"old_value":null}
 {"actor":"deacon","comment":null,"created_at":"2026-03-05T04:03:03Z","event_type":"status_changed","id":2107,"issue_id":"hq-4cwf","new_value":"{\"assignee\":\"deacon/\",\"status\":\"hooked\"}","old_value":"{\"id\":\"hq-4cwf\",\"title\":\"🤝 HANDOFF: Routine cycle\",\"description\":\"Completed 20 patrols, no incidents. 4 rigs active (meety_me, rally_tavern, theoutlived, vitalitek). 3 docked (gastown, lilypad_chat, wandering_river). Dolt 408.7MB healthy, 5 conn. Dog pool 1 idle. All plugins cooldown. Inbox clean.\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"assignee\":\"deacon/\",\"owner\":\"jeremy@theirish.com\",\"created_at\":\"2026-03-05T12:03:03Z\",\"created_by\":\"deacon/\",\"updated_at\":\"2026-03-05T12:03:03Z\"}"}
 {"actor":"deacon","comment":null,"created_at":"2026-03-05T04:03:25Z","event_type":"closed","id":2108,"issue_id":"hq-4cwf","new_value":"Closed","old_value":""}
+{"actor":"deacon/","comment":null,"created_at":"2026-03-05T04:18:28Z","event_type":"created","id":2109,"issue_id":"hq-sdk9","new_value":"","old_value":""}
+{"actor":"deacon/","comment":"Added label: from:deacon/","created_at":"2026-03-05T04:18:28Z","event_type":"label_added","id":2110,"issue_id":"hq-sdk9","new_value":null,"old_value":null}
+{"actor":"deacon/","comment":"Added label: gt:message","created_at":"2026-03-05T04:18:28Z","event_type":"label_added","id":2111,"issue_id":"hq-sdk9","new_value":null,"old_value":null}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:18:28Z","event_type":"status_changed","id":2112,"issue_id":"hq-sdk9","new_value":"{\"assignee\":\"deacon/\",\"status\":\"hooked\"}","old_value":"{\"id\":\"hq-sdk9\",\"title\":\"🤝 HANDOFF: Routine cycle\",\"description\":\"Completed 20 patrols, no incidents. 4 rigs active (meety_me, rally_tavern, theoutlived, vitalitek). 3 docked (gastown, lilypad_chat, wandering_river). Dolt 412.6MB healthy, 7 conn. Dog pool 1 idle. All plugins cooldown. Inbox clean.\",\"status\":\"open\",\"priority\":1,\"issue_type\":\"task\",\"assignee\":\"deacon/\",\"owner\":\"jeremy@theirish.com\",\"created_at\":\"2026-03-05T12:18:28Z\",\"created_by\":\"deacon/\",\"updated_at\":\"2026-03-05T12:18:28Z\"}"}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:19:03Z","event_type":"closed","id":2113,"issue_id":"hq-sdk9","new_value":"Closed","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:41Z","event_type":"closed","id":2114,"issue_id":"hq-03xi","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:41Z","event_type":"closed","id":2115,"issue_id":"hq-88zh","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:41Z","event_type":"closed","id":2116,"issue_id":"hq-s94a","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:41Z","event_type":"closed","id":2117,"issue_id":"hq-g0iq","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:41Z","event_type":"closed","id":2118,"issue_id":"hq-r9pp","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:41Z","event_type":"closed","id":2119,"issue_id":"hq-b7o3","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:41Z","event_type":"closed","id":2120,"issue_id":"hq-w6g4","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:41Z","event_type":"closed","id":2121,"issue_id":"hq-o250","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:41Z","event_type":"closed","id":2122,"issue_id":"hq-m2zn","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:41Z","event_type":"closed","id":2123,"issue_id":"hq-g39a","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:41Z","event_type":"closed","id":2124,"issue_id":"hq-dt6q","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:41Z","event_type":"closed","id":2125,"issue_id":"hq-a7xy","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2126,"issue_id":"hq-8m6f","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2127,"issue_id":"hq-1p2l","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2128,"issue_id":"hq-ulss","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2129,"issue_id":"hq-hea8","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2130,"issue_id":"hq-it60","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2131,"issue_id":"hq-d5me","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2132,"issue_id":"hq-hl9v","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2133,"issue_id":"hq-rl1a","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2134,"issue_id":"hq-6bxc","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2135,"issue_id":"hq-05rd","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2136,"issue_id":"hq-r49c","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2137,"issue_id":"hq-m8od","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2138,"issue_id":"hq-0l8m","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2139,"issue_id":"hq-f7lm","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2140,"issue_id":"hq-6joj","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2141,"issue_id":"hq-oaca","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2142,"issue_id":"hq-v43a","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:42Z","event_type":"closed","id":2143,"issue_id":"hq-r01v","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:49Z","event_type":"closed","id":2144,"issue_id":"hq-aoul","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:49Z","event_type":"closed","id":2145,"issue_id":"hq-l3ls","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:49Z","event_type":"closed","id":2146,"issue_id":"hq-z1wo","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:49Z","event_type":"closed","id":2147,"issue_id":"hq-0v22","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:50Z","event_type":"closed","id":2148,"issue_id":"hq-c98y","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:50Z","event_type":"closed","id":2149,"issue_id":"hq-6ij","new_value":"wontfix","old_value":""}
+{"actor":"deacon","comment":null,"created_at":"2026-03-05T04:20:50Z","event_type":"closed","id":2150,"issue_id":"hq-0gd","new_value":"wontfix","old_value":""}
