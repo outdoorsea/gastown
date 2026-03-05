@@ -408,6 +408,9 @@
 {"issue_id":"hq-b6z","label":"from:wandering_river/refinery"}
 {"issue_id":"hq-b6z","label":"gt:message"}
 {"issue_id":"hq-b6z","label":"read"}
+{"issue_id":"hq-b7o3","label":"from:meety_me/witness"}
+{"issue_id":"hq-b7o3","label":"gt:message"}
+{"issue_id":"hq-b7o3","label":"read"}
 {"issue_id":"hq-bid","label":"from:vitalitek/refinery"}
 {"issue_id":"hq-bid","label":"gt:message"}
 {"issue_id":"hq-bid","label":"read"}
@@ -567,6 +570,13 @@
 {"issue_id":"hq-fg2w","label":"from:meety_me/refinery"}
 {"issue_id":"hq-fg2w","label":"gt:message"}
 {"issue_id":"hq-fg2w","label":"read"}
+{"issue_id":"hq-fg83","label":"delivery-acked-at:2026-03-05T10:13:50Z"}
+{"issue_id":"hq-fg83","label":"delivery-acked-by:mayor/"}
+{"issue_id":"hq-fg83","label":"delivery:acked"}
+{"issue_id":"hq-fg83","label":"delivery:pending"}
+{"issue_id":"hq-fg83","label":"from:meety_me/witness"}
+{"issue_id":"hq-fg83","label":"gt:message"}
+{"issue_id":"hq-fg83","label":"read"}
 {"issue_id":"hq-fgyh","label":"from:theoutlived/refinery"}
 {"issue_id":"hq-fgyh","label":"gt:message"}
 {"issue_id":"hq-fhg","label":"from:meety_me/witness"}
