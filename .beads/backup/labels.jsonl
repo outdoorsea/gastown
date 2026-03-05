@@ -7,6 +7,9 @@
 {"issue_id":"hq-03xi","label":"from:theoutlived/witness"}
 {"issue_id":"hq-03xi","label":"gt:message"}
 {"issue_id":"hq-03xi","label":"read"}
+{"issue_id":"hq-05ln","label":"from:vitalitek/refinery"}
+{"issue_id":"hq-05ln","label":"gt:message"}
+{"issue_id":"hq-05ln","label":"read"}
 {"issue_id":"hq-05rd","label":"from:rally_tavern/refinery"}
 {"issue_id":"hq-05rd","label":"gt:message"}
 {"issue_id":"hq-05rd","label":"read"}
@@ -477,6 +480,9 @@
 {"issue_id":"hq-c3y","label":"from:rally_tavern/refinery"}
 {"issue_id":"hq-c3y","label":"gt:message"}
 {"issue_id":"hq-c3y","label":"read"}
+{"issue_id":"hq-c8i3","label":"from:vitalitek/refinery"}
+{"issue_id":"hq-c8i3","label":"gt:message"}
+{"issue_id":"hq-c8i3","label":"read"}
 {"issue_id":"hq-c98y","label":"from:meety_me/witness"}
 {"issue_id":"hq-c98y","label":"gt:message"}
 {"issue_id":"hq-c98y","label":"read"}
@@ -672,6 +678,13 @@
 {"issue_id":"hq-hea8","label":"from:vitalitek/witness"}
 {"issue_id":"hq-hea8","label":"gt:message"}
 {"issue_id":"hq-hea8","label":"read"}
+{"issue_id":"hq-hfbh","label":"delivery-acked-at:2026-03-05T14:07:40Z"}
+{"issue_id":"hq-hfbh","label":"delivery-acked-by:mayor/"}
+{"issue_id":"hq-hfbh","label":"delivery:acked"}
+{"issue_id":"hq-hfbh","label":"delivery:pending"}
+{"issue_id":"hq-hfbh","label":"from:vitalitek/refinery"}
+{"issue_id":"hq-hfbh","label":"gt:message"}
+{"issue_id":"hq-hfbh","label":"read"}
 {"issue_id":"hq-hl9v","label":"from:meety_me/witness"}
 {"issue_id":"hq-hl9v","label":"gt:message"}
 {"issue_id":"hq-hl9v","label":"read"}
@@ -710,6 +723,9 @@
 {"issue_id":"hq-ix6r","label":"from:vitalitek/refinery"}
 {"issue_id":"hq-ix6r","label":"gt:message"}
 {"issue_id":"hq-ix6r","label":"read"}
+{"issue_id":"hq-iy1w","label":"from:meety_me/witness"}
+{"issue_id":"hq-iy1w","label":"gt:message"}
+{"issue_id":"hq-iy1w","label":"read"}
 {"issue_id":"hq-ja82","label":"plugin:session-hygiene"}
 {"issue_id":"hq-ja82","label":"result:failure"}
 {"issue_id":"hq-ja82","label":"severity:high"}
@@ -958,6 +974,9 @@
 {"issue_id":"hq-rmxd","label":"from:vitalitek/refinery"}
 {"issue_id":"hq-rmxd","label":"gt:message"}
 {"issue_id":"hq-rmxd","label":"read"}
+{"issue_id":"hq-rn69","label":"from:theoutlived/witness"}
+{"issue_id":"hq-rn69","label":"gt:message"}
+{"issue_id":"hq-rn69","label":"read"}
 {"issue_id":"hq-rsk","label":"from:wandering_river/refinery"}
 {"issue_id":"hq-rsk","label":"gt:message"}
 {"issue_id":"hq-rsk","label":"read"}
