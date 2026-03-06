@@ -1040,7 +1040,11 @@ func (d *Daemon) checkDeaconHeartbeat() {
 	// Kill threshold must be > backoff-max (5m) to avoid false positive
 	// kills during legitimate await-signal sleep.
 	if hb.IsVeryStale() {
-		d.restartStuckDeacon(sessionName)
+		d.logger.Printf("STUCK DEACON: heartbeat stale for %s, killing session %s for restart", age.Round(time.Minute), sessionName)
+		if err := d.tmux.KillSessionWithProcesses(sessionName); err != nil {
+			d.logger.Printf("Error killing stuck Deacon session: %v", err)
+		}
+		// ensureDeaconRunning will restart it on the next heartbeat cycle
 	} else {
 		// Stale but not very stale (5-15 min) - nudge to wake up
 		d.logger.Printf("Deacon stuck for %s - nudging session", age.Round(time.Minute))
