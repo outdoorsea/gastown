@@ -1,7 +1,7 @@
 +++
 name = "stuck-agent-dog"
 description = "Context-aware stuck/crashed agent detection and restart for polecats and deacons"
-version = 1
+version = 2
 
 [gate]
 type = "cooldown"
@@ -38,6 +38,7 @@ Gather all polecats and the deacon session. We check both crashed sessions
 echo "=== Stuck Agent Dog: Checking agent health ==="
 
 TOWN_ROOT="$HOME/gt"
+RIGS_JSON="$TOWN_ROOT/mayor/rigs.json"
 
 # Get all rig names
 RIG_JSON=$(gt rig list --json 2>/dev/null)
@@ -47,6 +48,14 @@ if [ $? -ne 0 ] || [ -z "$RIG_JSON" ]; then
 fi
 
 RIG_NAMES=$(echo "$RIG_JSON" | jq -r '.[].name // empty' 2>/dev/null)
+
+# Build rig→prefix mapping from rigs.json
+# Session names use the beads prefix, not the full rig name.
+# Format: "{prefix}-{polecatName}" (e.g., "gt-furiosa", "mm-dust")
+get_rig_prefix() {
+  local rig="$1"
+  jq -r --arg r "$rig" '.rigs[$r].beads.prefix // empty' "$RIGS_JSON" 2>/dev/null
+}
 ```
 
 ## Step 2: Check polecat health
@@ -66,16 +75,25 @@ for RIG in $RIG_NAMES; do
   POLECAT_DIR="$TOWN_ROOT/$RIG/polecats"
   [ -d "$POLECAT_DIR" ] || continue
 
+  # Get tmux session prefix from rigs.json (e.g., "gastown" → "gt")
+  PREFIX=$(get_rig_prefix "$RIG")
+  if [ -z "$PREFIX" ]; then
+    echo "  WARN: No prefix found for rig $RIG, skipping"
+    continue
+  fi
+
   for PCAT_PATH in "$POLECAT_DIR"/*/; do
     [ -d "$PCAT_PATH" ] || continue
     PCAT_NAME=$(basename "$PCAT_PATH")
-    SESSION_NAME="${RIG}-polecat-${PCAT_NAME}"
+    # Session name format: "{prefix}-{name}" (e.g., "gt-furiosa")
+    SESSION_NAME="${PREFIX}-${PCAT_NAME}"
 
     # Check if session exists
     if ! tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-      # Session dead — check if it has hooked work
-      HOOK_BEAD=$(bd show "$RIG/polecats/$PCAT_NAME" --json 2>/dev/null \
-        | jq -r '.hook_bead // empty' 2>/dev/null)
+      # Session dead — check if it has hooked work via gt hook output
+      HOOK_LINE=$(gt hook "$RIG/polecats/$PCAT_NAME" 2>/dev/null \
+        | grep -oE 'Hooked: [^ ]+' | head -1)
+      HOOK_BEAD=$(echo "$HOOK_LINE" | sed 's/Hooked: //')
 
       if [ -n "$HOOK_BEAD" ]; then
         # Check agent_state to avoid interfering with active spawning
@@ -89,22 +107,20 @@ for RIG in $RIG_NAMES; do
         echo "  CRASHED: $SESSION_NAME (hook=$HOOK_BEAD)"
       fi
     else
-      # Session alive — check for agent process liveness
-      # Capture last 5 lines of pane output to check for signs of life
-      PANE_OUTPUT=$(tmux capture-pane -t "$SESSION_NAME" -p -S -5 2>/dev/null || echo "")
-
-      # Check if agent process is running in the session
+      # Session alive — check if the pane process (claude) is still running.
+      # NOTE: In Gas Town, the pane PID IS the claude process itself (not a
+      # parent shell). So we check if that PID is alive, not its children.
       PANE_PID=$(tmux list-panes -t "$SESSION_NAME" -F '#{pane_pid}' 2>/dev/null | head -1)
       if [ -n "$PANE_PID" ]; then
-        # Check if Claude or another agent process is a descendant
-        AGENT_ALIVE=$(pgrep -P "$PANE_PID" -f 'claude|node|anthropic' 2>/dev/null | head -1)
-        if [ -z "$AGENT_ALIVE" ]; then
-          # Agent process dead but session alive — zombie session
-          HOOK_BEAD=$(bd show "$RIG/polecats/$PCAT_NAME" --json 2>/dev/null \
-            | jq -r '.hook_bead // empty' 2>/dev/null)
+        PROC_COMM=$(ps -o comm= -p "$PANE_PID" 2>/dev/null)
+        if [ -z "$PROC_COMM" ]; then
+          # Process dead but session alive — zombie session
+          HOOK_LINE=$(gt hook "$RIG/polecats/$PCAT_NAME" 2>/dev/null \
+            | grep -oE 'Hooked: [^ ]+' | head -1)
+          HOOK_BEAD=$(echo "$HOOK_LINE" | sed 's/Hooked: //')
           if [ -n "$HOOK_BEAD" ]; then
             STUCK+=("$SESSION_NAME|$RIG|$PCAT_NAME|$HOOK_BEAD|agent_dead")
-            echo "  ZOMBIE: $SESSION_NAME (agent dead, session alive, hook=$HOOK_BEAD)"
+            echo "  ZOMBIE: $SESSION_NAME (pid=$PANE_PID dead, session alive, hook=$HOOK_BEAD)"
           fi
         else
           HEALTHY=$((HEALTHY + 1))
@@ -135,7 +151,17 @@ if ! tmux has-session -t "$DEACON_SESSION" 2>/dev/null; then
   echo "  CRASHED: Deacon session is dead"
   DEACON_ISSUE="crashed"
 else
-  # Check deacon heartbeat file
+  # Check if deacon process is alive (pane PID IS the claude process)
+  DEACON_PID=$(tmux list-panes -t "$DEACON_SESSION" -F '#{pane_pid}' 2>/dev/null | head -1)
+  DEACON_COMM=$(ps -o comm= -p "$DEACON_PID" 2>/dev/null)
+  if [ -z "$DEACON_COMM" ]; then
+    echo "  ZOMBIE: Deacon process dead (pid=$DEACON_PID), session alive"
+    DEACON_ISSUE="zombie"
+  else
+    echo "  Process alive: pid=$DEACON_PID comm=$DEACON_COMM"
+  fi
+
+  # Check deacon heartbeat file (if configured)
   HEARTBEAT_FILE="$TOWN_ROOT/deacon/.deacon-heartbeat"
   if [ -f "$HEARTBEAT_FILE" ]; then
     HEARTBEAT_TIME=$(stat -f %m "$HEARTBEAT_FILE" 2>/dev/null || stat -c %Y "$HEARTBEAT_FILE" 2>/dev/null)
@@ -149,7 +175,7 @@ else
       echo "  OK: Deacon heartbeat ${HEARTBEAT_AGE}s old"
     fi
   else
-    echo "  WARN: No heartbeat file found"
+    echo "  INFO: No heartbeat file (may not be configured)"
   fi
 fi
 ```
