@@ -1599,7 +1599,9 @@ exit /b 0
 		t.Fatalf("read bd log: %v", err)
 	}
 
-	// Verify that ALL bd commands received BD_DOLT_AUTO_COMMIT=off
+	// Verify that bd commands received BD_DOLT_AUTO_COMMIT=off by default.
+	// Exception: hook writes (update --status=hooked) use WithAutoCommit()
+	// to ensure immediate visibility to new polecat connections (GH#2389).
 	logLines := strings.Split(strings.TrimSpace(string(logBytes)), "\n")
 	if len(logLines) == 0 {
 		t.Fatal("no bd commands logged")
@@ -1607,6 +1609,13 @@ exit /b 0
 
 	for _, line := range logLines {
 		if line == "" {
+			continue
+		}
+		// Hook writes legitimately use WithAutoCommit() (GH#2389 fix)
+		if strings.Contains(line, "--status=hooked") {
+			if !strings.Contains(line, "ENV:BD_DOLT_AUTO_COMMIT=on|") {
+				t.Errorf("hook write should have BD_DOLT_AUTO_COMMIT=on: %s", line)
+			}
 			continue
 		}
 		if !strings.Contains(line, "ENV:BD_DOLT_AUTO_COMMIT=off|") {
