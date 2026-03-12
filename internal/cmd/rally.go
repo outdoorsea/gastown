@@ -31,17 +31,18 @@ func init() {
 
 var rallyCmd = &cobra.Command{
 	Use:     "rally",
-	Short:   "Search rally_tavern knowledge base",
+	Short:   "Search and contribute to rally_tavern knowledge base",
 	GroupID: GroupWork,
 	RunE:    requireSubcommand,
-	Long: `Search the rally_tavern knowledge base for practices, solutions, and lessons.
+	Long: `Search and contribute to the rally_tavern knowledge base.
 
 Rally Tavern is a shared knowledge repository at $GT_ROOT/rally_tavern/.
 If rally_tavern is not present, commands degrade gracefully.
 
 Commands:
   search    Search knowledge by query, tags, or codebase type
-  lookup    Look up knowledge by exact tag (agent self-serve)`,
+  lookup    Look up knowledge by exact tag (agent self-serve)
+  nominate  Nominate a knowledge contribution for review by franklin`,
 }
 
 var rallySearchCmd = &cobra.Command{
