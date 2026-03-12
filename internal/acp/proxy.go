@@ -359,7 +359,8 @@ func (p *Proxy) forwardToAgent() {
 		p.Shutdown()
 	}()
 
-	reader := bufio.NewReader(p.stdin)
+	// Use large buffer to handle large JSON messages from the UI
+	reader := bufio.NewReaderSize(p.stdin, 1024*1024)
 	receivedInput := false
 
 	for {
@@ -388,9 +389,15 @@ func (p *Proxy) forwardToAgent() {
 		}
 
 		receivedInput = true
+
 		var msg JSONRPCMessage
 		if err := json.Unmarshal([]byte(line), &msg); err != nil {
 			continue
+		}
+
+		// Log large messages that might cause issues
+		if len(line) > 50000 {
+			debugLog(p.townRoot, "[Proxy] forwardToAgent: large message received (size=%d, method=%s)", len(line), msg.Method)
 		}
 
 		p.trackHandshakeRequest(&msg)
