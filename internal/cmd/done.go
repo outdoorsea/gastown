@@ -390,15 +390,29 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
+		// Check no_merge flag on the hooked bead. When set, this is a non-code
+		// task (email, research, API calls) where zero commits is expected.
+		// Must be checked before the zero-commit guard below (GH#2496).
+		isNoMergeTask := false
+		if issueID != "" {
+			noMergeBd := beads.New(cwd)
+			if noMergeIssue, showErr := noMergeBd.Show(issueID); showErr == nil {
+				if af := beads.ParseAttachmentFields(noMergeIssue); af != nil && af.NoMerge {
+					isNoMergeTask = true
+				}
+			}
+		}
+
 		// If no commits ahead, work was likely pushed directly to main (or already merged)
 		// For polecats, zero commits usually means the polecat sleepwalked through
 		// implementation without writing code (gastown#1484, beads#emma).
 		// The --cleanup-status=clean escape is preserved for legitimate report-only
 		// tasks (audits, reviews) that the formula explicitly directs to use it.
+		// no_merge tasks (GH#2496) also bypass: non-code work has no commits by design.
 		// IMPORTANT: The error message must NOT mention --cleanup-status=clean.
 		// LLM agents read error messages and self-bypass (the original bug).
 		if aheadCount == 0 {
-			if os.Getenv("GT_POLECAT") != "" && doneCleanupStatus != "clean" {
+			if os.Getenv("GT_POLECAT") != "" && doneCleanupStatus != "clean" && !isNoMergeTask {
 				return fmt.Errorf("cannot complete: no commits on branch ahead of %s\n"+
 					"Polecats must have at least 1 commit to submit.\n"+
 					"If the bug was already fixed upstream: gt done --status DEFERRED\n"+
@@ -406,8 +420,9 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 					originDefault)
 			}
 
-			// Non-polecat (crew/mayor) or polecat with --cleanup-status=clean
-			// (report-only tasks like audits/reviews where no code changes expected):
+			// Non-polecat (crew/mayor), polecat with --cleanup-status=clean
+			// (report-only tasks like audits/reviews), or no_merge polecat
+			// (non-code tasks like email/research per GH#2496):
 			// zero commits is valid.
 			fmt.Printf("%s Branch has no commits ahead of %s\n", style.Bold.Render("→"), originDefault)
 			fmt.Printf("  Work was likely pushed directly to main or already merged.\n")
@@ -737,18 +752,36 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			}
 		}
 
-		// Determine target branch (auto-detect integration branch if applicable)
-		// Only if refinery integration branch auto-targeting is enabled
+		// Determine target branch for the MR.
+		// Priority: explicit --base-branch > integration branch auto-detect > rig default.
 		target := defaultBranch
-		refineryEnabled := true
-		settingsPath := filepath.Join(townRoot, rigName, "settings", "config.json")
-		if settings, err := config.LoadRigSettings(settingsPath); err == nil && settings.MergeQueue != nil {
-			refineryEnabled = settings.MergeQueue.IsRefineryIntegrationEnabled()
+
+		// Check for explicit --base-branch override (stored in formula vars at sling time).
+		// When gt sling is called with --base-branch, the value is persisted in the bead's
+		// formula_vars field. If it differs from the rig's default branch, use it as the
+		// MR target so the refinery merges into the correct branch (GH#2357).
+		if sourceIssueForNoMerge != nil {
+			if af := beads.ParseAttachmentFields(sourceIssueForNoMerge); af != nil {
+				if bb := extractFormulaVar(af.FormulaVars, "base_branch"); bb != "" && bb != defaultBranch {
+					target = bb
+					fmt.Printf("  Target branch override: %s (from --base-branch)\n", target)
+				}
+			}
 		}
-		if refineryEnabled {
-			autoTarget, err := beads.DetectIntegrationBranch(bd, g, issueID)
-			if err == nil && autoTarget != "" {
-				target = autoTarget
+
+		// Auto-detect integration branch from epic hierarchy (if enabled).
+		// Only overrides if no explicit --base-branch was set (target == defaultBranch).
+		if target == defaultBranch {
+			refineryEnabled := true
+			settingsPath := filepath.Join(townRoot, rigName, "settings", "config.json")
+			if settings, err := config.LoadRigSettings(settingsPath); err == nil && settings.MergeQueue != nil {
+				refineryEnabled = settings.MergeQueue.IsRefineryIntegrationEnabled()
+			}
+			if refineryEnabled {
+				autoTarget, err := beads.DetectIntegrationBranch(bd, g, issueID)
+				if err == nil && autoTarget != "" {
+					target = autoTarget
+				}
 			}
 		}
 
@@ -865,6 +898,14 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			if agentBeadID != "" {
 				if err := bd.UpdateAgentActiveMR(agentBeadID, mrID); err != nil {
 					style.PrintWarning("could not update agent bead with active_mr: %v", err)
+				}
+			}
+
+			// GH#2599: Back-link source issue to MR bead for discoverability.
+			if issueID != "" {
+				comment := fmt.Sprintf("MR created: %s", mrID)
+				if _, err := bd.Run("comments", "add", issueID, comment); err != nil {
+					style.PrintWarning("could not back-link source issue %s to MR %s: %v", issueID, mrID, err)
 				}
 			}
 
@@ -1210,12 +1251,15 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) {
 		}
 	}
 
-	if hookedBeadID != "" {
+	if hookedBeadID != "" && exitType != ExitDeferred {
 		// BUG FIX (gt-pftz): Close hooked bead unless already terminal (closed/tombstone).
 		// Previously checked hookedBead.Status == StatusHooked, but polecats update
 		// their work bead to in_progress during work. The exact-match check caused
 		// gt done to skip closing the bead, leaving it as unassigned open work after
 		// the hook was cleared — triggering infinite dispatch loops.
+		//
+		// DEFERRED exits preserve the bead: work is paused, not done. The bead
+		// stays open/in_progress so it can be resumed on the next session.
 		if hookedBead, err := bd.Show(hookedBeadID); err == nil && !beads.IssueStatus(hookedBead.Status).IsTerminal() {
 			// BUG FIX: Close attached molecule (wisp) BEFORE closing hooked bead.
 			// When using formula-on-bead (gt sling formula --on bead), the base bead
@@ -1259,6 +1303,12 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) {
 	}
 
 	// No ClearHookBead call needed — agent bead hook slot is no longer maintained (hq-l6mm5).
+
+	// Purge closed ephemeral beads (wisps) accumulated during this and prior sessions.
+	// Without this, closed wisps from mol-polecat-work steps, mol-witness-patrol cycles,
+	// etc. accumulate across sessions and pollute bd ready/list output (hq-6161m).
+	// Best-effort: failures are non-fatal since the work is already done.
+	purgeClosedEphemeralBeads(bd)
 
 	// Self-managed completion (gt-1qlg, polecat-self-managed-completion.md Phase 2):
 	// Polecat sets agent_state=idle directly, skipping the intermediate "done" state.
@@ -1440,4 +1490,25 @@ func selfKillSession(townRoot string, roleInfo RoleInfo) error {
 	}
 
 	return nil
+}
+
+// purgeClosedEphemeralBeads removes closed ephemeral beads (wisps) that accumulated
+// during this and prior sessions. Polecat/witness sessions create mol-polecat-work
+// steps, mol-witness-patrol cycles, etc. as wisps. These get closed during normal
+// operation but are never deleted, accumulating hundreds of rows that pollute
+// bd ready/list output. (hq-6161m)
+//
+// Best-effort: errors are logged but don't block gt done completion.
+func purgeClosedEphemeralBeads(bd *beads.Beads) {
+	out, err := bd.Run("purge", "--force", "--quiet")
+	if err != nil {
+		// Non-fatal: purge failure shouldn't block session completion
+		fmt.Fprintf(os.Stderr, "Warning: wisp purge failed: %v\n", err)
+		return
+	}
+	// bd purge --force --quiet outputs the count of purged beads
+	outStr := strings.TrimSpace(string(out))
+	if outStr != "" && outStr != "0" {
+		fmt.Fprintf(os.Stderr, "Purged closed ephemeral beads: %s\n", outStr)
+	}
 }

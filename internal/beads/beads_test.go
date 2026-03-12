@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -30,6 +32,19 @@ func TestListOptions(t *testing.T) {
 	}
 	if opts.Status != "open" {
 		t.Errorf("Status = %q, want open", opts.Status)
+	}
+}
+
+// TestListOptionsEphemeral verifies that Ephemeral flag is preserved.
+func TestListOptionsEphemeral(t *testing.T) {
+	opts := ListOptions{
+		Label:     "gt:merge-request",
+		Status:    "open",
+		Priority:  -1,
+		Ephemeral: true,
+	}
+	if !opts.Ephemeral {
+		t.Error("Ephemeral should be true")
 	}
 }
 
@@ -79,6 +94,70 @@ func TestIsFlagLikeTitle(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("IsFlagLikeTitle(%q) = %v, want %v", tt.title, got, tt.want)
 		}
+	}
+}
+
+func TestBdSupportsAllowStale_ReprobesWhenBinaryPathChanges(t *testing.T) {
+	bdAllowStaleMu.Lock()
+	prevPath := bdAllowStalePath
+	prevResult := bdAllowStaleResult
+	bdAllowStaleMu.Unlock()
+	ResetBdAllowStaleCacheForTest()
+	t.Cleanup(func() {
+		bdAllowStaleMu.Lock()
+		bdAllowStalePath = prevPath
+		bdAllowStaleResult = prevResult
+		bdAllowStaleMu.Unlock()
+	})
+
+	supportingDir := t.TempDir()
+	nonSupportingDir := t.TempDir()
+	writeAllowStaleBDStub(t, supportingDir, true)
+	writeAllowStaleBDStub(t, nonSupportingDir, false)
+
+	origPath := os.Getenv("PATH")
+	t.Setenv("PATH", supportingDir+string(os.PathListSeparator)+origPath)
+	if !BdSupportsAllowStale() {
+		t.Fatal("expected first stub to support --allow-stale")
+	}
+
+	t.Setenv("PATH", nonSupportingDir+string(os.PathListSeparator)+origPath)
+	if BdSupportsAllowStale() {
+		t.Fatal("expected second stub to be re-probed and report no --allow-stale support")
+	}
+}
+
+func writeAllowStaleBDStub(t *testing.T, dir string, supportsAllowStale bool) {
+	t.Helper()
+
+	var scriptPath, script string
+	if runtime.GOOS == "windows" {
+		scriptPath = filepath.Join(dir, "bd.bat")
+		exitCode := "1"
+		if supportsAllowStale {
+			exitCode = "0"
+		}
+		script = fmt.Sprintf(`@echo off
+setlocal enableextensions
+if "%%1"=="--allow-stale" exit /b %s
+exit /b 1
+`, exitCode)
+	} else {
+		scriptPath = filepath.Join(dir, "bd")
+		exitCode := "1"
+		if supportsAllowStale {
+			exitCode = "0"
+		}
+		script = fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "--allow-stale" ]; then
+  exit %s
+fi
+exit 1
+`, exitCode)
+	}
+
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write bd stub: %v", err)
 	}
 }
 
@@ -660,7 +739,7 @@ func TestMRFieldsRoundTrip(t *testing.T) {
 		t.Fatal("round-trip parse returned nil")
 	}
 
-	if *parsed != *original {
+	if !reflect.DeepEqual(parsed, original) {
 		t.Errorf("round-trip mismatch:\ngot  %+v\nwant %+v", parsed, original)
 	}
 }
@@ -806,6 +885,17 @@ ATTACHED_AT: 2025-12-21T14:00:00Z`,
 				AttachedAt:       "2025-12-21T14:00:00Z",
 			},
 		},
+		{
+			name: "attached vars",
+			issue: &Issue{
+				Description: `attached_formula: mol-release
+attached_vars: ["version=1.2.3","channel=stable"]`,
+			},
+			wantFields: &AttachmentFields{
+				AttachedFormula: "mol-release",
+				AttachedVars:    []string{"version=1.2.3", "channel=stable"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -828,6 +918,9 @@ ATTACHED_AT: 2025-12-21T14:00:00Z`,
 			}
 			if fields.AttachedAt != tt.wantFields.AttachedAt {
 				t.Errorf("AttachedAt = %q, want %q", fields.AttachedAt, tt.wantFields.AttachedAt)
+			}
+			if !reflect.DeepEqual(fields.AttachedVars, tt.wantFields.AttachedVars) {
+				t.Errorf("AttachedVars = %#v, want %#v", fields.AttachedVars, tt.wantFields.AttachedVars)
 			}
 		})
 	}
@@ -865,6 +958,14 @@ attached_at: 2025-12-21T15:30:00Z`,
 				AttachedMolecule: "mol-abc",
 			},
 			want: "attached_molecule: mol-abc",
+		},
+		{
+			name: "attached vars",
+			fields: &AttachmentFields{
+				AttachedFormula: "mol-release",
+				AttachedVars:    []string{"version=1.2.3", "channel=stable"},
+			},
+			want: "attached_formula: mol-release\nattached_vars: [\"version=1.2.3\",\"channel=stable\"]",
 		},
 	}
 
@@ -977,7 +1078,7 @@ func TestAttachmentFieldsRoundTrip(t *testing.T) {
 		t.Fatal("round-trip parse returned nil")
 	}
 
-	if *parsed != *original {
+	if !reflect.DeepEqual(parsed, original) {
 		t.Errorf("round-trip mismatch:\ngot  %+v\nwant %+v", parsed, original)
 	}
 }
@@ -1050,7 +1151,7 @@ func TestNoMergeField(t *testing.T) {
 		if parsed == nil {
 			t.Fatal("round-trip parse returned nil")
 		}
-		if *parsed != *original {
+		if !reflect.DeepEqual(parsed, original) {
 			t.Errorf("round-trip mismatch:\ngot  %+v\nwant %+v", parsed, original)
 		}
 	})
@@ -1897,14 +1998,100 @@ func TestDelegationTerms(t *testing.T) {
 
 // TestSetupRedirect tests the beads redirect setup for worktrees.
 func TestSetupRedirect(t *testing.T) {
-	t.Run("crew worktree with local beads", func(t *testing.T) {
-		// Setup: town/rig/.beads (local, no redirect)
+	t.Run("rig with own DB redirects to rig-level beads", func(t *testing.T) {
+		// When rig has its own dolt_database in metadata.json, crew must
+		// redirect to rig-level .beads (not town-level) to see correct prefix.
+		townRoot := t.TempDir()
+		townBeads := filepath.Join(townRoot, ".beads")
+		rigRoot := filepath.Join(townRoot, "testrig")
+		rigBeads := filepath.Join(rigRoot, ".beads")
+		crewPath := filepath.Join(rigRoot, "crew", "max")
+
+		// Create both town-level and rig-level beads
+		if err := os.MkdirAll(filepath.Join(townBeads, "dolt"), 0755); err != nil {
+			t.Fatalf("mkdir town beads: %v", err)
+		}
+		if err := os.MkdirAll(rigBeads, 0755); err != nil {
+			t.Fatalf("mkdir rig beads: %v", err)
+		}
+		// Rig has its own database (e.g., laneassist with lc- prefix)
+		meta := []byte(`{"dolt_database":"testrig","backend":"dolt"}`)
+		if err := os.WriteFile(filepath.Join(rigBeads, "metadata.json"), meta, 0644); err != nil {
+			t.Fatalf("write metadata: %v", err)
+		}
+		if err := os.MkdirAll(crewPath, 0755); err != nil {
+			t.Fatalf("mkdir crew: %v", err)
+		}
+
+		if err := SetupRedirect(townRoot, crewPath); err != nil {
+			t.Fatalf("SetupRedirect failed: %v", err)
+		}
+
+		redirectPath := filepath.Join(crewPath, ".beads", "redirect")
+		content, err := os.ReadFile(redirectPath)
+		if err != nil {
+			t.Fatalf("read redirect: %v", err)
+		}
+
+		// 2 levels up to rig root: crew/max -> testrig, then .beads
+		want := "../../.beads\n"
+		if string(content) != want {
+			t.Errorf("redirect content = %q, want %q", string(content), want)
+		}
+
+		// Verify redirect resolves to rig-level, NOT town-level
+		resolved := ResolveBeadsDir(crewPath)
+		if resolved != rigBeads {
+			t.Errorf("resolved = %q, want %q (rig-level)", resolved, rigBeads)
+		}
+	})
+
+	t.Run("rig without own DB redirects to town-level beads", func(t *testing.T) {
+		// When rig has no own database, crew should use town-level .beads.
+		townRoot := t.TempDir()
+		townBeads := filepath.Join(townRoot, ".beads")
+		rigRoot := filepath.Join(townRoot, "testrig")
+		crewPath := filepath.Join(rigRoot, "crew", "max")
+
+		// Create town-level beads with dolt DB
+		if err := os.MkdirAll(filepath.Join(townBeads, "dolt"), 0755); err != nil {
+			t.Fatalf("mkdir town beads: %v", err)
+		}
+		if err := os.MkdirAll(crewPath, 0755); err != nil {
+			t.Fatalf("mkdir crew: %v", err)
+		}
+
+		if err := SetupRedirect(townRoot, crewPath); err != nil {
+			t.Fatalf("SetupRedirect failed: %v", err)
+		}
+
+		redirectPath := filepath.Join(crewPath, ".beads", "redirect")
+		content, err := os.ReadFile(redirectPath)
+		if err != nil {
+			t.Fatalf("read redirect: %v", err)
+		}
+
+		// 3 levels up: crew/max -> testrig -> townRoot, then .beads
+		want := "../../../.beads\n"
+		if string(content) != want {
+			t.Errorf("redirect content = %q, want %q", string(content), want)
+		}
+
+		// Verify redirect resolves to town-level
+		resolved := ResolveBeadsDir(crewPath)
+		if resolved != townBeads {
+			t.Errorf("resolved = %q, want %q", resolved, townBeads)
+		}
+	})
+
+	t.Run("crew worktree falls back to rig-level beads", func(t *testing.T) {
+		// When neither rig metadata nor town-level .beads exists, fall back to rig-level (2 levels up).
 		townRoot := t.TempDir()
 		rigRoot := filepath.Join(townRoot, "testrig")
 		rigBeads := filepath.Join(rigRoot, ".beads")
 		crewPath := filepath.Join(rigRoot, "crew", "max")
 
-		// Create rig structure
+		// Create rig-level beads only (no town-level, no metadata.json)
 		if err := os.MkdirAll(rigBeads, 0755); err != nil {
 			t.Fatalf("mkdir rig beads: %v", err)
 		}

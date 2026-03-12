@@ -221,11 +221,8 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 			"--description=" + description,
 			"--type=agent",
 			"--labels=gt:agent",
+			"--ephemeral",
 		}
-		// Persistent polecats (gt-4ac): agent beads are non-ephemeral (issues table).
-		// They persist across polecat lifecycles and survive Dolt GC.
-		// Previously used --ephemeral (wisps table) but persistent polecats need
-		// durable agent state for idle detection and reuse.
 		if NeedsForceForID(id) {
 			a = append(a, "--force")
 		}
@@ -237,8 +234,8 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 		return a
 	}
 
-	// Create non-ephemeral agent bead (issues table). Persistent polecats (gt-4ac)
-	// need durable agent beads that survive across work assignments.
+	// Create ephemeral agent bead (wisps table). Agent operational state has
+	// zero git history consumers (gt-bewatn.9).
 	out, err := b.run(buildArgs()...)
 	if err != nil {
 		out, err = b.run(buildArgs()...)
@@ -256,9 +253,15 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 
 	// Note: role slot no longer set - role definitions are config-based
 
-	// Hook slot no longer maintained (hq-l6mm5). Work bead status+assignee
-	// is the authoritative source. HookBead in description is still written
-	// by FormatAgentDescription for backward compat with display readers.
+	// Set hook_bead slot so gt mol status can find hooked work via the
+	// agent bead's JSON field (primary lookup path in lookupHookedWork).
+	// The fallback query (status=hooked + assignee) is unreliable for
+	// cross-database scenarios. Restoring per hq-gfg.
+	if fields != nil && fields.HookBead != "" {
+		if _, slotErr := b.run("slot", "set", id, "hook", fields.HookBead); slotErr != nil {
+			// Non-fatal: fallback query may still find the work bead
+		}
+	}
 
 	return &issue, nil
 }
@@ -341,17 +344,23 @@ func (b *Beads) CreateOrReopenAgentBead(id, title string, fields *AgentFields) (
 	if _, err := target.run("update", id, "--type=agent"); err != nil {
 		return nil, fmt.Errorf("fixing agent bead type: %w", err)
 	}
-	// Persistent polecats (gt-4ac): agent beads are non-ephemeral.
-	// Migrate any existing ephemeral (wisp) beads to the issues table
-	// by removing the ephemeral flag. This ensures agent state persists
-	// across polecat lifecycles for idle detection and reuse.
-	if _, err := target.run("update", id, "--persistent"); err != nil {
-		// Non-fatal: the bead is functional either way
-		// --persistent promotes wisp to issues table (bd update --help)
+	// Ensure agent bead is ephemeral (wisp) — agent operational state has
+	// zero git history consumers (gt-bewatn.9)
+	if _, err := target.run("update", id, "--ephemeral"); err != nil {
+		// Non-fatal: the bead is functional without ephemeral flag
+		_ = err
 	}
 
 	// Note: role slot no longer set - role definitions are config-based
-	// Hook slot no longer maintained (hq-l6mm5) - work bead status+assignee is authoritative.
+
+	// Set hook_bead slot so gt mol status can find hooked work via the
+	// agent bead's JSON field (primary lookup path in lookupHookedWork).
+	// Restoring per hq-gfg.
+	if fields != nil && fields.HookBead != "" {
+		if _, slotErr := target.run("slot", "set", id, "hook", fields.HookBead); slotErr != nil {
+			// Non-fatal: fallback query may still find the work bead
+		}
+	}
 
 	// Return the updated bead
 	return target.Show(id)
@@ -606,6 +615,12 @@ func (b *Beads) GetAgentBead(id string) (*Issue, *AgentFields, error) {
 	}
 
 	fields := ParseAgentFields(issue.Description)
+	// Prefer the structured agent_state column when present.
+	// Some writers (for example, `bd agent state`) update the DB column directly
+	// without rewriting the description text, so description-derived state can be stale.
+	if issue.AgentState != "" {
+		fields.AgentState = issue.AgentState
+	}
 	return issue, fields, nil
 }
 
@@ -620,16 +635,17 @@ func (b *Beads) ListAgentBeads() (map[string]*Issue, error) {
 	// doctor checks (for example, validating gt:agent labels).
 	// Agent beads are type=agent (infrastructure), hidden by bd list default filter.
 	// Use --include-infra so they appear in results.
-	out, err := b.run("list", "--label=gt:agent", "--include-infra", "--json")
+	out, err := b.run("list", "--label=gt:agent", "--include-infra", "--json", "--no-pager")
 	if err != nil {
 		return nil, err
 	}
 	issuesByID := make(map[string]*Issue)
 	var issues []*Issue
-	if jsonErr := json.Unmarshal(out, &issues); jsonErr == nil {
-		for _, issue := range issues {
-			issuesByID[issue.ID] = issue
-		}
+	if jsonErr := json.Unmarshal(out, &issues); jsonErr != nil {
+		return nil, fmt.Errorf("parsing bd list --json output: %w (raw output %d bytes)", jsonErr, len(out))
+	}
+	for _, issue := range issues {
+		issuesByID[issue.ID] = issue
 	}
 
 	// Query wisps table as a fallback source.

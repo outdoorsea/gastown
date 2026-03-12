@@ -1,9 +1,11 @@
 package witness
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -328,14 +330,38 @@ func mockBd(execFn func(args []string) (string, error), runFn func(args []string
 	bd := &BdCli{
 		Exec: func(workDir string, args ...string) (string, error) {
 			mock.calls = append(mock.calls, strings.Join(args, " "))
-			return execFn(args)
+			return execFn(stripMockBdFlags(args))
 		},
 		Run: func(workDir string, args ...string) error {
 			mock.calls = append(mock.calls, strings.Join(args, " "))
-			return runFn(args)
+			return runFn(stripMockBdFlags(args))
 		},
 	}
 	return bd, mock
+}
+
+func stripMockBdFlags(args []string) []string {
+	for len(args) > 0 && strings.HasPrefix(args[0], "--") {
+		args = args[1:]
+	}
+	return args
+}
+
+func installFakeTmuxNoServer(t *testing.T) {
+	t.Helper()
+
+	binDir := t.TempDir()
+	scriptPath := filepath.Join(binDir, "tmux")
+	script := "#!/bin/sh\nprintf '%s\\n' 'no server running on /tmp/tmux' 1>&2\nexit 1\n"
+	if runtime.GOOS == "windows" {
+		scriptPath += ".bat"
+		script = "@echo off\r\necho no server running on C:\\tmp\\tmux 1>&2\r\nexit /b 1\r\n"
+	}
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fake tmux: %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // fakeBd creates a test-local *BdCli matching the old shell script behavior:
@@ -1084,6 +1110,8 @@ func TestDetectOrphanedBeads_ResultTypes(t *testing.T) {
 }
 
 func TestDetectOrphanedBeads_WithMockBd(t *testing.T) {
+	installFakeTmuxNoServer(t)
+
 	// Set up town directory structure
 	townRoot := t.TempDir()
 	rigName := "testrig"
@@ -1367,6 +1395,8 @@ func TestFindMRBeadForBranch_NoBdAvailable(t *testing.T) {
 }
 
 func TestDetectOrphanedMolecules_WithMockBd(t *testing.T) {
+	installFakeTmuxNoServer(t)
+
 	// Full test with mock bd returning beads assigned to dead polecats.
 	//
 	// Setup:
@@ -1799,3 +1829,67 @@ func TestZombieAgentSelfReportedStuck_Classification(t *testing.T) {
 	}
 }
 
+func TestNotifyRefineryMergeReady_EmitsChannelEvent(t *testing.T) {
+	// Create a fake town root with the workspace marker so workspace.Find recognizes it
+	townRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(townRoot, "mayor"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, "mayor", "town.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set GT_TEST_NUDGE_LOG to prevent actual tmux operations in nudgeRefinery
+	t.Setenv("GT_TEST_NUDGE_LOG", filepath.Join(t.TempDir(), "nudge.log"))
+
+	result := &HandlerResult{}
+	// notifyRefineryMergeReady takes workDir and calls workspace.Find(workDir) internally
+	notifyRefineryMergeReady(townRoot, "dashboard", result)
+
+	// Verify that a MERGE_READY event file was created in the refinery channel
+	eventDir := filepath.Join(townRoot, "events", "refinery")
+	entries, err := os.ReadDir(eventDir)
+	if err != nil {
+		t.Fatalf("reading event dir: %v", err)
+	}
+
+	var eventFiles []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".event") {
+			eventFiles = append(eventFiles, e.Name())
+		}
+	}
+
+	if len(eventFiles) == 0 {
+		t.Fatal("expected at least one .event file in ~/gt/events/refinery/, got none")
+	}
+
+	// Read and verify the event content
+	data, err := os.ReadFile(filepath.Join(eventDir, eventFiles[0]))
+	if err != nil {
+		t.Fatalf("reading event file: %v", err)
+	}
+
+	var event map[string]interface{}
+	if err := json.Unmarshal(data, &event); err != nil {
+		t.Fatalf("parsing event JSON: %v", err)
+	}
+
+	if event["type"] != "MERGE_READY" {
+		t.Errorf("event type = %v, want MERGE_READY", event["type"])
+	}
+	if event["channel"] != "refinery" {
+		t.Errorf("event channel = %v, want refinery", event["channel"])
+	}
+
+	payload, ok := event["payload"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("payload is not a map: %T", event["payload"])
+	}
+	if payload["source"] != "witness" {
+		t.Errorf("payload.source = %v, want witness", payload["source"])
+	}
+	if payload["rig"] != "dashboard" {
+		t.Errorf("payload.rig = %v, want dashboard", payload["rig"])
+	}
+}

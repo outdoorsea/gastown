@@ -1,7 +1,7 @@
 +++
 name = "session-hygiene"
 description = "Clean up zombie tmux sessions and orphaned dog sessions"
-version = 1
+version = 2
 
 [gate]
 type = "cooldown"
@@ -19,10 +19,10 @@ severity = "low"
 
 # Session Hygiene
 
-Identifies and kills zombie tmux sessions (wrong prefix, no registered rig)
-and orphaned dog sessions (tmux session exists but dog not in kennel).
+Deterministic cleanup of zombie tmux sessions and orphaned dog sessions.
+Executed via `run.sh` — no AI interpretation of destructive cleanup logic.
 
-## Step 1: Get valid rig prefixes
+## What it does
 
 Fetch the rig registry to know which session prefixes are legitimate.
 Session names use the bead prefix (e.g. `mm` for meety_me, `rt` for rally_tavern),
@@ -159,4 +159,22 @@ bd create "session-hygiene: FAILED" -t chore --ephemeral \
 gt escalate "Plugin FAILED: session-hygiene" \
   --severity low \
   --reason "$ERROR"
+1. Reads `rigs.json` for valid rig names and beads prefixes
+2. Lists all tmux sessions and checks each session's prefix against valid prefixes
+3. Kills sessions whose prefix doesn't match any known rig or `hq`
+4. Cross-references `hq-dog-*` sessions against the kennel, kills orphans
+
+## Why run.sh (not AI-interpreted plugin.md)
+
+This plugin was converted from AI-interpreted markdown to a deterministic shell
+script after two incidents where the AI dog ignored plugin instructions and used
+`gt rig list --json` (which returns rig names like "gastown") instead of reading
+`rigs.json` (which contains beads prefixes like "gt"). This caused all crew
+sessions to be misidentified as zombies and killed.
+
+## Usage
+
+```bash
+./run.sh              # Normal execution
+./run.sh --dry-run    # Report without killing
 ```

@@ -14,11 +14,13 @@ import (
 	"time"
 
 	"github.com/steveyegge/gastown/internal/beads"
+	"github.com/steveyegge/gastown/internal/channelevents"
 	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/daemon"
 	"github.com/steveyegge/gastown/internal/formula"
+	rigpkg "github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/style"
 	"github.com/steveyegge/gastown/internal/telemetry"
@@ -255,6 +257,7 @@ func getBeadInfo(beadID string) (*beadInfo, error) {
 type beadFieldUpdates struct {
 	Dispatcher       string // Agent that dispatched the work
 	Args             string // Natural language instructions
+	Vars             []string // Formula variables (key=value pairs)
 	AttachedMolecule string // Wisp root ID
 	AttachedFormula  string // Formula name (e.g., "mol-polecat-work") for inline step display
 	NoMerge          bool   // Skip merge queue on completion
@@ -262,6 +265,7 @@ type beadFieldUpdates struct {
 	ConvoyID         string // Convoy bead ID (e.g., "hq-cv-abc")
 	MergeStrategy    string // Convoy merge strategy: "direct", "mr", "local"
 	ConvoyOwned      bool   // Convoy has gt:owned label (caller-managed lifecycle)
+	FormulaVars      string // Newline-separated key=value pairs for formula template substitution
 }
 
 // storeFieldsInBead performs a single read-modify-write to update all attachment fields
@@ -309,6 +313,9 @@ func storeFieldsInBead(beadID string, updates beadFieldUpdates) error {
 	if updates.Args != "" {
 		fields.AttachedArgs = updates.Args
 	}
+	if len(updates.Vars) > 0 {
+		fields.AttachedVars = append([]string(nil), updates.Vars...)
+	}
 	if updates.AttachedMolecule != "" {
 		fields.AttachedMolecule = updates.AttachedMolecule
 		if fields.AttachedAt == "" {
@@ -332,6 +339,9 @@ func storeFieldsInBead(beadID string, updates beadFieldUpdates) error {
 	}
 	if updates.ConvoyOwned {
 		fields.ConvoyOwned = true
+	}
+	if updates.FormulaVars != "" {
+		fields.FormulaVars = updates.FormulaVars
 	}
 
 	// Write back once
@@ -600,7 +610,7 @@ func nudgeWitness(rigName, message string) {
 	// Emit a file event so the witness's await-event unblocks instantly.
 	townRoot, _ := workspace.FindFromCwd()
 	if townRoot != "" {
-		_, _ = EmitEventToTown(townRoot, "witness", "POLECAT_DONE", []string{
+		_, _ = channelevents.EmitToTown(townRoot, "witness", "POLECAT_DONE", []string{
 			"source=polecat",
 			"message=" + message,
 		})
@@ -635,7 +645,7 @@ func nudgeRefinery(rigName, message string) {
 	// This is the programmatic bridge between mq submit and the event system.
 	townRoot, _ := workspace.FindFromCwd()
 	if townRoot != "" {
-		_, _ = EmitEventToTown(townRoot, "refinery", "MQ_SUBMIT", []string{
+		_, _ = channelevents.EmitToTown(townRoot, "refinery", "MQ_SUBMIT", []string{
 			"source=sling",
 			"message=" + message,
 		})
@@ -890,7 +900,7 @@ func ensureFormulaRequiredVars(formulaName string, vars []string) []string {
 		{"setup_command", ""},
 		{"typecheck_command", ""},
 		{"lint_command", ""},
-		{"test_command", "go test ./..."},
+		{"test_command", ""},
 		{"build_command", ""},
 	}
 	for _, item := range requiredDefaults {
@@ -984,7 +994,6 @@ func hookBeadWithRetry(beadID, targetAgent, hookDir string) error {
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		err := BdCmd("update", beadID, "--status=hooked", "--assignee="+targetAgent).
 			Dir(hookDir).
-			WithAutoCommit().
 			Run()
 		if err != nil {
 			lastErr = err
@@ -1073,19 +1082,27 @@ func isSlingConfigError(err error) bool {
 }
 
 // loadRigCommandVars reads rig settings and returns --var key=value strings
-// for all configured build pipeline commands (setup, typecheck, lint, test, build).
-// Only non-empty commands are included; empty means "skip" in the formula.
+// for all configured build pipeline commands (setup, typecheck, lint, test, build)
+// and the default branch (base_branch). Only non-empty values are included.
 func loadRigCommandVars(townRoot, rig string) []string {
 	if townRoot == "" || rig == "" {
 		return nil
 	}
+	var vars []string
+
+	// Load default_branch from rig root config.json (single source of truth per 5ee9abcc).
+	// This sets base_branch for formula instantiation so polecats fork from the right branch.
+	rigCfg, err := rigpkg.LoadRigConfig(filepath.Join(townRoot, rig))
+	if err == nil && rigCfg != nil && rigCfg.DefaultBranch != "" {
+		vars = append(vars, fmt.Sprintf("base_branch=%s", rigCfg.DefaultBranch))
+	}
+
 	settingsPath := filepath.Join(townRoot, rig, "settings", "config.json")
 	settings, err := config.LoadRigSettings(settingsPath)
 	if err != nil || settings == nil || settings.MergeQueue == nil {
-		return nil
+		return vars
 	}
 	mq := settings.MergeQueue
-	var vars []string
 	if mq.SetupCommand != "" {
 		vars = append(vars, fmt.Sprintf("setup_command=%s", mq.SetupCommand))
 	}

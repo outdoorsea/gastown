@@ -208,7 +208,14 @@ func (m *Manager) Start(foreground bool, agentOverride string, envOverrides []st
 	}
 	_ = t.SetEnvironment(sessionID, "GT_RUN", runID)
 	// Apply role config env vars if present (non-fatal).
+	// Skip keys already set by AgentEnv to prevent TOML env overriding
+	// the canonical qualified GT_ROLE (e.g., "gastown/witness" not "witness").
+	// See: https://github.com/steveyegge/gastown/issues/2492
 	for key, value := range roleConfigEnvVars(roleConfig, townRoot, m.rig.Name) {
+		if existing, alreadySet := envVars[key]; alreadySet {
+			log.Printf("witness env: skipping TOML %s=%q (AgentEnv already set %q)", key, value, existing)
+			continue
+		}
 		_ = t.SetEnvironment(sessionID, key, value)
 	}
 	// Apply CLI env overrides (highest priority, non-fatal).
@@ -294,7 +301,29 @@ func buildWitnessStartCommand(rigPath, rigName, townRoot, sessionName, agentOver
 		roleConfig = nil
 	}
 	if roleConfig != nil && roleConfig.StartCommand != "" {
-		return beads.ExpandRolePattern(roleConfig.StartCommand, townRoot, rigName, "", "witness", session.PrefixFor(rigName)), nil
+		// Skip the hardcoded start_command when a non-Claude agent is configured.
+		// Built-in role TOMLs hardcode "exec claude ..." which bypasses the
+		// declarative agent resolution system. Fall through to
+		// BuildStartupCommandFromConfig so the correct agent command is built.
+		rc := config.ResolveRoleAgentConfig("witness", townRoot, rigPath)
+		if config.IsResolvedAgentClaude(rc) {
+			cmd := beads.ExpandRolePattern(roleConfig.StartCommand, townRoot, rigName, "", "witness", session.PrefixFor(rigName))
+			// Prepend env sanitization: CLAUDECODE causes Claude Code to
+			// reject startup (nested session detection) when inherited from
+			// tmux server environment. NODE_OPTIONS can contain debugger flags
+			// that crash Claude's Node.js runtime.
+			// NOTE: "exec" is a shell builtin, not a binary. If the TOML
+			// start_command begins with "exec", we must keep exec as the
+			// outermost command so the shell handles it, then use env for
+			// the actual binary. "env ... exec cmd" fails because env tries
+			// to run "exec" as a program (exit 127).
+			if strings.HasPrefix(cmd, "exec ") {
+				cmd = "exec env -u CLAUDECODE NODE_OPTIONS='' " + strings.TrimPrefix(cmd, "exec ")
+			} else {
+				cmd = "env -u CLAUDECODE NODE_OPTIONS='' " + cmd
+			}
+			return cmd, nil
+		}
 	}
 	initialPrompt := session.BuildStartupPrompt(session.BeaconConfig{
 		Recipient: session.BeaconRecipient("witness", "", rigName),

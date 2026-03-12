@@ -137,6 +137,12 @@ type AgentPresetInfo struct {
 	// EmitsPermissionWarning indicates the agent shows a bypass-permissions warning on startup
 	// that needs to be acknowledged via tmux.
 	EmitsPermissionWarning bool `json:"emits_permission_warning,omitempty"`
+
+	// HasTurnBoundaryDrain indicates the agent's hooks system drains the nudge
+	// queue on every turn boundary (like Claude's UserPromptSubmit hook). When
+	// false, a background nudge-poller process is started to periodically drain
+	// the queue and inject via tmux.
+	HasTurnBoundaryDrain bool `json:"has_turn_boundary_drain,omitempty"`
 }
 
 // NonInteractiveConfig contains settings for running agents non-interactively.
@@ -191,6 +197,7 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		ReadyDelayMs:           10000,
 		InstructionsFile:       "CLAUDE.md",
 		EmitsPermissionWarning: true,
+		HasTurnBoundaryDrain:   true,
 	},
 	AgentGemini: {
 		Name:                AgentGemini,
@@ -319,7 +326,7 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		SessionIDEnv:        "",                   // Session IDs stored on disk, not in env
 		ResumeFlag:          "--resume",
 		ResumeStyle:         "flag",
-		SupportsHooks:       false, // Copilot instructions file is not executable hooks
+		SupportsHooks:       true,  // Copilot CLI supports .github/hooks/*.json lifecycle hooks
 		SupportsForkSession: false,
 		NonInteractive: &NonInteractiveConfig{
 			PromptFlag: "-p",
@@ -328,9 +335,9 @@ var builtinPresets = map[AgentPreset]*AgentPresetInfo{
 		PromptMode:         "arg",
 		ConfigDir:          ".copilot",
 		HooksProvider:      "copilot",
-		HooksDir:           ".copilot",
-		HooksSettingsFile:  "copilot-instructions.md",
-		HooksInformational: true,
+		HooksDir:           ".github/hooks",
+		HooksSettingsFile:  "gastown.json",
+		HooksInformational: false,
 		ReadyPromptPrefix:  "❯ ",
 		ReadyDelayMs:       5000,
 		InstructionsFile:   "AGENTS.md",

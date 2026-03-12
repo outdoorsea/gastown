@@ -105,11 +105,7 @@ func TestGetAgentBeadID_UsesRigPrefix(t *testing.T) {
 }
 
 func TestPrimeFlagCombinations(t *testing.T) {
-	// Find the gt binary - we need to test CLI flag validation
-	gtBin, err := exec.LookPath("gt")
-	if err != nil {
-		t.Skip("gt binary not found in PATH")
-	}
+	gtBin := buildGT(t)
 
 	cases := []struct {
 		name      string
@@ -635,11 +631,7 @@ func TestExplain(t *testing.T) {
 
 // TestDryRunSkipsSideEffects tests that --dry-run skips various side effects via CLI.
 func TestDryRunSkipsSideEffects(t *testing.T) {
-	// Find the gt binary
-	gtBin, err := exec.LookPath("gt")
-	if err != nil {
-		t.Skip("gt binary not found in PATH")
-	}
+	gtBin := buildGT(t)
 
 	// Create a temp workspace
 	townRoot := t.TempDir()
@@ -901,4 +893,41 @@ func TestOutputContinuationDirective(t *testing.T) {
 			t.Fatalf("expected molecule hint in output, got: %s", output)
 		}
 	})
+}
+
+func TestCheckSlungWork_StandaloneFormulaUsesWorkflowOutput(t *testing.T) {
+	ctx := RoleContext{Role: RoleCrew}
+	hookedBead := &beads.Issue{
+		ID:    "gt-wisp-xyz",
+		Title: "Standalone formula work",
+		Description: strings.Join([]string{
+			"attached_formula: mol-nonexistent",
+			`attached_vars: ["version=1.2.3"]`,
+		}, "\n"),
+	}
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	found := checkSlungWork(ctx, hookedBead)
+
+	w.Close()
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	os.Stdout = oldStdout
+	output := buf.String()
+
+	if !found {
+		t.Fatalf("checkSlungWork() = false, want true")
+	}
+	if !strings.Contains(output, "ATTACHED FORMULA") {
+		t.Fatalf("expected standalone formula hook to use workflow output, got:\n%s", output)
+	}
+	if strings.Contains(output, "Bead details:") {
+		t.Fatalf("expected standalone formula hook to skip plain bead preview, got:\n%s", output)
+	}
+	if !strings.Contains(output, "--var version=1.2.3") {
+		t.Fatalf("expected standalone formula context to be shown, got:\n%s", output)
+	}
 }

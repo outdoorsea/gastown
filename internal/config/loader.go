@@ -1212,7 +1212,8 @@ func ResolveRoleAgentConfig(role, townRoot, rigPath string) *RuntimeConfig {
 // ResolveWorkerAgentConfig resolves the agent configuration for a named crew worker.
 // Resolution order:
 //  1. Rig's WorkerAgents[workerName] — per-worker override
-//  2. Falls back to ResolveRoleAgentConfig("crew", ...) for remaining resolution
+//  2. Town's CrewAgents[workerName] — town-wide per-crew override
+//  3. Falls back to ResolveRoleAgentConfig("crew", ...) for remaining resolution
 //
 // workerName is the crew member name (e.g., "denali").
 func ResolveWorkerAgentConfig(workerName, townRoot, rigPath string) *RuntimeConfig {
@@ -1244,9 +1245,47 @@ func ResolveWorkerAgentConfig(workerName, townRoot, rigPath string) *RuntimeConf
 		}
 	}
 
+	// Check town's CrewAgents
+	if workerName != "" && townRoot != "" {
+		townSettings, err := LoadOrCreateTownSettings(TownSettingsPath(townRoot))
+		if err == nil && townSettings != nil {
+			if agentName, ok := townSettings.CrewAgents[workerName]; ok && agentName != "" {
+				var rigSettings *RigSettings
+				if rigPath != "" {
+					rigSettings, _ = LoadRigSettings(RigSettingsPath(rigPath))
+				}
+				_ = LoadAgentRegistry(DefaultAgentRegistryPath(townRoot))
+				if rigPath != "" {
+					_ = LoadRigAgentRegistry(RigAgentRegistryPath(rigPath))
+				}
+				if rc := lookupCustomAgentConfig(agentName, townSettings, rigSettings); rc != nil {
+					rc.ResolvedAgent = agentName
+					return withRoleSettingsFlag(rc, "crew", rigPath)
+				}
+				if err := ValidateAgentConfig(agentName, townSettings, rigSettings); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: crew_agents[%s]=%s - %v, falling back\n", workerName, agentName, err)
+				} else {
+					rc := lookupAgentConfig(agentName, townSettings, rigSettings)
+					rc.ResolvedAgent = agentName
+					return withRoleSettingsFlag(rc, "crew", rigPath)
+				}
+			}
+		}
+	}
+
 	// Fall back to crew role resolution (already holds lock; use core function)
 	rc := resolveRoleAgentConfigCore("crew", townRoot, rigPath)
 	return withRoleSettingsFlag(rc, "crew", rigPath)
+}
+
+// IsResolvedAgentClaude returns true if the RuntimeConfig represents a Claude agent.
+// Exported for use in witness/daemon code that needs to skip hardcoded
+// Claude start commands when a non-Claude agent is configured.
+func IsResolvedAgentClaude(rc *RuntimeConfig) bool {
+	if rc == nil {
+		return true // Default to Claude when config is unavailable
+	}
+	return isClaudeAgent(rc)
 }
 
 // isClaudeAgent returns true if the RuntimeConfig represents a Claude agent.

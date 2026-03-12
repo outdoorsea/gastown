@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -693,7 +694,9 @@ func runDogDone(cmd *cobra.Command, args []string) error {
 	t := tmux.NewTmux()
 	_ = t.SetRemainOnExit(sessionID, false)
 	fmt.Printf("  Session %s will terminate in 3s\n", sessionID)
-	killCmd := exec.Command("bash", "-c",
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	killCmd := exec.CommandContext(ctx, "bash", "-c",
 		fmt.Sprintf("sleep 3 && tmux kill-session -t '%s' 2>/dev/null", sessionID))
 	util.SetProcessGroup(killCmd)
 	if err := killCmd.Start(); err != nil {
@@ -1110,6 +1113,20 @@ func runDogDispatch(cmd *cobra.Command, args []string) error {
 			}
 		}
 		return fmt.Errorf("sending plugin mail to dog: %w", err)
+	}
+
+	// Ensure dog session is running so it can read the mail.
+	// Without this, dispatched work sits in mail with no session to read it.
+	t := tmux.NewTmux()
+	sessMgr := dog.NewSessionManager(t, townRoot, mgr)
+	sessOpts := dog.SessionStartOptions{
+		WorkDesc: workDesc,
+	}
+	if _, sessErr := sessMgr.EnsureRunning(targetDog.Name, sessOpts); sessErr != nil {
+		// Non-fatal: work is assigned and mail is sent, session may start later
+		if !dogDispatchJSON {
+			style.PrintWarning("could not start dog session: %v", sessErr)
+		}
 	}
 
 	// Success - output result

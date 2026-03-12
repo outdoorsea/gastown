@@ -57,6 +57,49 @@ func validateSessionName(name string) error {
 	return nil
 }
 
+// validateCommandBinary extracts the binary path from a tmux session command
+// and verifies it exists on disk. Handles common patterns:
+//   - "exec env VAR=val /path/to/binary --args"
+//   - "/path/to/binary --args"
+//   - "sh -c '...'" (skipped — shell will handle resolution)
+//
+// Only checks absolute paths to avoid false positives on shell builtins.
+func validateCommandBinary(command string) error {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return nil
+	}
+
+	// Skip past "exec" and "env" prefixes, and KEY=VAL assignments.
+	i := 0
+	for i < len(fields) {
+		f := fields[i]
+		if f == "exec" || f == "env" {
+			i++
+			continue
+		}
+		if strings.Contains(f, "=") && !strings.HasPrefix(f, "/") && !strings.HasPrefix(f, "-") {
+			i++
+			continue
+		}
+		break
+	}
+
+	if i >= len(fields) {
+		return nil
+	}
+
+	binary := fields[i]
+	// Only validate absolute paths — relative or bare names are resolved by shell.
+	if !strings.HasPrefix(binary, "/") {
+		return nil
+	}
+	if _, err := os.Stat(binary); err != nil {
+		return fmt.Errorf("command binary not found: %s", binary)
+	}
+	return nil
+}
+
 // defaultSocket is the tmux socket name (-L flag) for multi-instance isolation.
 // When set, all tmux commands use this socket instead of the default server.
 // Access is protected by defaultSocketMu for concurrent test safety.
@@ -139,8 +182,8 @@ const noTownSocket = "gt-no-town-socket"
 const EnvAgentReady = "GT_AGENT_READY"
 
 // NewTmux creates a new Tmux wrapper using the initialized town socket.
-// Falls back to GT_TOWN_SOCKET env var (set by cross-socket tmux bindings),
-// then to a sentinel socket that fails clearly if neither is available.
+// Falls back to GT_TOWN_SOCKET env var (set by cross-socket tmux bindings).
+// Empty socket means use the default tmux server.
 func NewTmux() *Tmux {
 	sock := GetDefaultSocket()
 	if sock == "" {
@@ -148,11 +191,6 @@ func NewTmux() *Tmux {
 		// so that "gt agents menu" / "gt feed" invoked from a personal terminal still
 		// target the correct town server even when InitRegistry was not called.
 		sock = os.Getenv("GT_TOWN_SOCKET")
-	}
-	if sock == "" {
-		// No town context available: use sentinel to produce a clear error rather
-		// than silently connecting to the user's personal tmux server.
-		sock = noTownSocket
 	}
 	return &Tmux{socketName: sock}
 }
@@ -255,6 +293,16 @@ func (t *Tmux) NewSessionWithCommand(name, workDir, command string) error {
 			return fmt.Errorf("work directory %q is not a directory", workDir)
 		}
 	}
+	if err := validateCommandBinary(command); err != nil {
+		return err
+	}
+
+	// Defense-in-depth: remove CLAUDECODE from the tmux server's global
+	// environment so new sessions don't inherit it. Claude Code sets this
+	// variable on startup and the tmux server inherits it if started from
+	// within a Claude Code session. This causes nested-session detection
+	// failures in all subsequently created sessions.
+	_, _ = t.run("set-environment", "-g", "-u", "CLAUDECODE")
 
 	// Two-step creation: create session with default shell first, configure
 	// remain-on-exit, then replace the shell with the actual command. This
@@ -302,6 +350,11 @@ func (t *Tmux) NewSessionWithCommandAndEnv(name, workDir, command string, env ma
 	if err := validateSessionName(name); err != nil {
 		return err
 	}
+
+	// Kill stale same-named sessions on other sockets to prevent split-brain.
+	// This is best-effort: failures are silently ignored.
+	t.killSplitBrainSession(name)
+
 	if workDir != "" {
 		info, err := os.Stat(workDir)
 		if err != nil {
@@ -310,6 +363,9 @@ func (t *Tmux) NewSessionWithCommandAndEnv(name, workDir, command string, env ma
 		if !info.IsDir() {
 			return fmt.Errorf("work directory %q is not a directory", workDir)
 		}
+	}
+	if err := validateCommandBinary(command); err != nil {
+		return err
 	}
 
 	// Two-step creation: create session with env vars and default shell, then
@@ -508,6 +564,12 @@ const processKillGracePeriod = 2 * time.Second
 //
 // This ensures Claude processes and all their children are properly terminated.
 func (t *Tmux) KillSessionWithProcesses(name string) error {
+	// Disarm auto-respawn BEFORE killing anything. The pane-died hook would
+	// otherwise respawn the process 3 seconds after we kill it, creating a
+	// zombie that fights every kill attempt.
+	_ = t.SetRemainOnExit(name, false)
+	_, _ = t.run("set-hook", "-t", name, "-u", "pane-died")
+
 	// Get the pane PID
 	pid, err := t.GetPanePID(name)
 	if err != nil {
@@ -576,6 +638,10 @@ func (t *Tmux) KillSessionWithProcesses(name string) error {
 // the calling process (e.g., gt done) is running inside the session it's terminating.
 // Without exclusion, the caller would be killed before completing the cleanup.
 func (t *Tmux) KillSessionWithProcessesExcluding(name string, excludePIDs []string) error {
+	// Disarm auto-respawn BEFORE killing anything (same as KillSessionWithProcesses).
+	_ = t.SetRemainOnExit(name, false)
+	_, _ = t.run("set-hook", "-t", name, "-u", "pane-died")
+
 	// Build exclusion set for O(1) lookup
 	exclude := make(map[string]bool)
 	for _, pid := range excludePIDs {
@@ -661,6 +727,24 @@ func (t *Tmux) KillSessionWithProcessesExcluding(name string, excludePIDs []stri
 		return nil
 	}
 	return err
+}
+
+// killSplitBrainSession kills a same-named session on the "default" tmux socket
+// if this Tmux instance targets a different socket. This prevents split-brain
+// where stale sessions on the wrong socket shadow the real ones, causing nudge
+// and other session-discovery commands to fail.
+//
+// Best-effort: all errors are silently ignored. The stale session may not exist,
+// the default server may not be running, etc. — none of these should block
+// session creation on the correct socket.
+func (t *Tmux) killSplitBrainSession(name string) {
+	if t.socketName == "" || t.socketName == "default" || t.socketName == noTownSocket {
+		return // Already on default or no town context — nothing to clean up
+	}
+	other := NewTmuxWithSocket("default")
+	if running, _ := other.HasSession(name); running {
+		_ = other.KillSessionWithProcesses(name)
+	}
 }
 
 // collectReparentedGroupMembers returns process group members that have been

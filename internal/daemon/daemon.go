@@ -20,6 +20,7 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 	"github.com/steveyegge/gastown/internal/beads"
 	"github.com/steveyegge/gastown/internal/boot"
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/deacon"
 	"github.com/steveyegge/gastown/internal/doltserver"
@@ -27,6 +28,7 @@ import (
 	"github.com/steveyegge/gastown/internal/feed"
 	gitpkg "github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mayor"
+	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/refinery"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/session"
@@ -173,6 +175,25 @@ func New(config *Config) (*Daemon, error) {
 		doltServer = NewDoltServerManager(config.TownRoot, patrolConfig.Patrols.DoltServer, logger.Printf)
 		if doltServer.IsEnabled() {
 			logger.Printf("Dolt server management enabled (port %d)", patrolConfig.Patrols.DoltServer.Port)
+			// Propagate Dolt port to process env so AgentEnv() passes it to
+			// all spawned agent sessions. Without this, bd in agent sessions
+			// auto-starts rogue Dolt instances. (GH#2412)
+			portStr := strconv.Itoa(patrolConfig.Patrols.DoltServer.Port)
+			os.Setenv("GT_DOLT_PORT", portStr)
+			os.Setenv("BEADS_DOLT_PORT", portStr)
+		}
+	}
+
+	// Fallback: if GT_DOLT_PORT still isn't set (no DoltServerManager, daemon
+	// started independently of gt up), detect the port from dolt config.
+	// This ensures AgentEnv() always has the port for spawned sessions. (GH#2412)
+	if os.Getenv("GT_DOLT_PORT") == "" {
+		doltCfg := doltserver.DefaultConfig(config.TownRoot)
+		if doltCfg.Port > 0 {
+			portStr := strconv.Itoa(doltCfg.Port)
+			os.Setenv("GT_DOLT_PORT", portStr)
+			os.Setenv("BEADS_DOLT_PORT", portStr)
+			logger.Printf("Set GT_DOLT_PORT=%s from Dolt config (fallback)", portStr)
 		}
 	}
 
@@ -628,8 +649,13 @@ func (d *Daemon) heartbeat(state *State) {
 
 	// 5. Ensure Refineries are running for all rigs (restart if dead)
 	// Check patrol config - can be disabled in mayor/daemon.json
+	// Pressure-gated: refineries consume API credits, defer when system is loaded.
 	if IsPatrolEnabled(d.patrolConfig, "refinery") {
-		d.ensureRefineriesRunning()
+		if p := d.checkPressure("refinery"); !p.OK {
+			d.logger.Printf("Deferring refinery spawn: %s", p.Reason)
+		} else {
+			d.ensureRefineriesRunning()
+		}
 	} else {
 		d.logger.Printf("Refinery patrol disabled in config, skipping")
 		// Kill leftover refinery sessions from before patrol was disabled. (hq-2mstj)
@@ -640,8 +666,15 @@ func (d *Daemon) heartbeat(state *State) {
 	d.ensureMayorRunning()
 
 	// 6.5. Handle Dog lifecycle: cleanup stuck dogs and dispatch plugins
+	// Pressure-gated: dog dispatch spawns new agent sessions.
 	if IsPatrolEnabled(d.patrolConfig, "handler") {
-		d.handleDogs()
+		if p := d.checkPressure("dog"); !p.OK {
+			d.logger.Printf("Deferring dog dispatch: %s", p.Reason)
+			// Still run cleanup phases (stuck/stale/idle) — only skip dispatch
+			d.handleDogsCleanupOnly()
+		} else {
+			d.handleDogs()
+		}
 	} else {
 		d.logger.Printf("Handler patrol disabled in config, skipping")
 	}
@@ -661,6 +694,11 @@ func (d *Daemon) heartbeat(state *State) {
 	// This validates tmux sessions are still alive for polecats with work-on-hook
 	d.checkPolecatSessionHealth()
 
+	// 12b. Reap idle polecat sessions to prevent API slot burn.
+	// Polecats transition to IDLE after gt done but sessions stay alive.
+	// Kill sessions that have been idle longer than the configured threshold.
+	d.reapIdlePolecats()
+
 	// 13. Clean up orphaned claude subagent processes (memory leak prevention)
 	// These are Task tool subagents that didn't clean up after completion.
 	// This is a safety net - Deacon patrol also does this more frequently.
@@ -674,7 +712,12 @@ func (d *Daemon) heartbeat(state *State) {
 
 	// 14. Dispatch scheduled work (capacity-controlled polecat dispatch).
 	// Shells out to `gt scheduler run` to avoid circular import between daemon and cmd.
-	d.dispatchQueuedWork()
+	// Pressure-gated: polecats are the primary resource consumers.
+	if p := d.checkPressure("polecat"); !p.OK {
+		d.logger.Printf("Deferring polecat dispatch: %s", p.Reason)
+	} else {
+		d.dispatchQueuedWork()
+	}
 
 	// 15. Rotate oversized Dolt logs (copytruncate for child process fds).
 	// daemon.log uses lumberjack for automatic rotation; this handles Dolt server logs.
@@ -1440,20 +1483,35 @@ func (d *Daemon) isRigOperational(rigName string) (bool, string) {
 	// Check rig bead labels (global/synced docked status)
 	// This is the persistent docked state set by 'gt rig dock'
 	rigPath := filepath.Join(d.config.TownRoot, rigName)
+	
+	// Try to get prefix from rig config.json, fall back to rigs.json registry
+	var prefix string
 	if rigCfg, err := rig.LoadRigConfig(rigPath); err == nil && rigCfg.Beads != nil {
-		rigBeadID := fmt.Sprintf("%s-rig-%s", rigCfg.Beads.Prefix, rigName)
-		rigBeadsDir := beads.ResolveBeadsDir(rigPath)
-		bd := beads.NewWithBeadsDir(rigPath, rigBeadsDir)
-		if issue, err := bd.Show(rigBeadID); err == nil {
-			for _, label := range issue.Labels {
-				if label == "status:docked" {
-					return false, "rig is docked (global)"
-				}
-				if label == "status:parked" {
-					return false, "rig is parked (global)"
-				}
+		prefix = rigCfg.Beads.Prefix
+	} else {
+		// Fall back to registry (mayor/rigs.json) when config.json is missing
+		prefix = config.GetRigPrefix(d.config.TownRoot, rigName)
+	}
+	
+	rigBeadID := fmt.Sprintf("%s-rig-%s", prefix, rigName)
+	rigBeadsDir := beads.ResolveBeadsDir(rigPath)
+	bd := beads.NewWithBeadsDir(rigPath, rigBeadsDir)
+	if issue, err := bd.Show(rigBeadID); err == nil {
+		for _, label := range issue.Labels {
+			if label == "status:docked" {
+				return false, "rig is docked (global)"
+			}
+			if label == "status:parked" {
+				return false, "rig is parked (global)"
 			}
 		}
+	} else {
+		// Log when rig bead lookup fails - this helps debug transient Dolt issues
+		// FAIL-SAFE: When we can't verify docked status (Dolt down, network issue, etc.),
+		// assume the rig is NOT operational. This prevents wasting API credits starting
+		// witnesses that might be docked. Better to delay work than burn credits unnecessarily.
+		d.logger.Printf("Warning: failed to check rig bead %s for docked/parked status: %v (assuming not operational)", rigBeadID, err)
+		return false, "cannot verify rig status (Dolt unavailable)"
 	}
 
 	// Check auto_restart config
@@ -1997,10 +2055,124 @@ Restart deferred to stuck-agent-dog plugin for context-aware recovery.`,
 
 	cmd := exec.Command(d.gtPath, "mail", "send", witnessAddr, "-s", subject, "-m", body) //nolint:gosec // G204: args are constructed internally
 	cmd.Dir = d.config.TownRoot
-	cmd.Env = os.Environ() // Inherit PATH to find gt executable
+	cmd.Env = append(os.Environ(), "BD_ACTOR=daemon") // Identify as daemon, not overseer
 	if err := cmd.Run(); err != nil {
 		d.logger.Printf("Warning: failed to notify witness of crashed polecat: %v", err)
 	}
+}
+
+// reapIdlePolecats kills polecat tmux sessions that have been idle too long.
+// The persistent polecat model (gt-4ac) keeps sessions alive after gt done for reuse,
+// but idle sessions consume API slots (Claude Code process stays alive at 0% CPU).
+// This reaper checks heartbeat state and kills sessions idle longer than the threshold.
+func (d *Daemon) reapIdlePolecats() {
+	opCfg := d.loadOperationalConfig().GetDaemonConfig()
+	timeout := opCfg.PolecatIdleSessionTimeoutD()
+
+	rigs := d.getKnownRigs()
+	for _, rigName := range rigs {
+		d.reapRigIdlePolecats(rigName, timeout)
+	}
+}
+
+// reapRigIdlePolecats checks all polecats in a rig and kills idle sessions.
+func (d *Daemon) reapRigIdlePolecats(rigName string, timeout time.Duration) {
+	polecatsDir := filepath.Join(d.config.TownRoot, rigName, "polecats")
+	polecats, err := listPolecatWorktrees(polecatsDir)
+	if err != nil {
+		return // No polecats directory
+	}
+
+	for _, polecatName := range polecats {
+		d.reapIdlePolecat(rigName, polecatName, timeout)
+	}
+}
+
+// reapIdlePolecat checks a single polecat and kills it if idle too long.
+// A polecat is considered idle if:
+//   - Heartbeat state is "exiting" or "idle" and timestamp exceeds threshold, OR
+//   - Heartbeat state is "working" but timestamp is stale AND the polecat has no
+//     hooked work (agent_state=idle in beads). This catches polecats that completed
+//     gt done — persistentPreRun resets heartbeat to "working" on every gt sub-command,
+//     so after gt done finishes the heartbeat shows "working" with a stale timestamp.
+func (d *Daemon) reapIdlePolecat(rigName, polecatName string, timeout time.Duration) {
+	sessionName := session.PolecatSessionName(session.PrefixFor(rigName), polecatName)
+
+	// Only check sessions that are actually alive
+	alive, err := d.tmux.HasSession(sessionName)
+	if err != nil || !alive {
+		return
+	}
+
+	// Read heartbeat to check state and idle duration
+	hb := polecat.ReadSessionHeartbeat(d.config.TownRoot, sessionName)
+	if hb == nil {
+		return // No heartbeat file — can't determine state
+	}
+
+	staleDuration := time.Since(hb.Timestamp)
+	if staleDuration < timeout {
+		return // Heartbeat is fresh — polecat is active
+	}
+
+	state := hb.EffectiveState()
+
+	// Explicitly idle or exiting — safe to reap
+	if state == polecat.HeartbeatIdle || state == polecat.HeartbeatExiting {
+		d.killIdlePolecat(rigName, polecatName, sessionName, staleDuration, timeout, string(state))
+		return
+	}
+
+	// Heartbeat says "working" but is stale — check if polecat actually has hooked work.
+	// If agent_state=idle in beads and no hook_bead, the polecat finished gt done
+	// and is sitting idle (heartbeat wasn't updated to "idle" because persistentPreRun
+	// resets to "working" on every gt sub-command during gt done).
+	if state == polecat.HeartbeatWorking {
+		prefix := beads.GetPrefixForRig(d.config.TownRoot, rigName)
+		agentBeadID := beads.PolecatBeadIDWithPrefix(prefix, rigName, polecatName)
+		info, err := d.getAgentBeadInfo(agentBeadID)
+		if err != nil {
+			// Agent bead lookup failed — polecat has no provable work.
+			// If heartbeat is stale enough (2x timeout), reap anyway to prevent
+			// indefinite API burn when bead infrastructure is degraded.
+			if staleDuration >= timeout*2 {
+				d.killIdlePolecat(rigName, polecatName, sessionName, staleDuration, timeout, "working-bead-lookup-failed")
+			}
+			return
+		}
+
+		// If polecat has hooked work, it might just be stuck (not idle).
+		// Don't reap — let checkPolecatSessionHealth handle stuck polecats.
+		if info.HookBead != "" {
+			return
+		}
+
+		// No hooked work + stale heartbeat = idle polecat
+		d.killIdlePolecat(rigName, polecatName, sessionName, staleDuration, timeout, "working-no-hook")
+	}
+}
+
+// killIdlePolecat terminates an idle polecat session and cleans up.
+func (d *Daemon) killIdlePolecat(rigName, polecatName, sessionName string, idleDuration, timeout time.Duration, reason string) {
+	d.logger.Printf("Reaping idle polecat %s/%s (state=%s, idle %v, threshold %v)",
+		rigName, polecatName, reason, idleDuration.Truncate(time.Second), timeout)
+
+	// Kill the tmux session (and all descendant processes)
+	if err := d.tmux.KillSessionWithProcesses(sessionName); err != nil {
+		d.logger.Printf("Warning: failed to kill idle polecat session %s: %v", sessionName, err)
+		return
+	}
+
+	// Clean up heartbeat file
+	polecat.RemoveSessionHeartbeat(d.config.TownRoot, sessionName)
+
+	d.logger.Printf("Reaped idle polecat %s/%s — session killed, API slot freed", rigName, polecatName)
+
+	// Emit feed event so the activity feed shows the reap
+	_ = events.LogFeed(events.TypeSessionDeath, fmt.Sprintf("%s/%s", rigName, polecatName),
+		events.SessionDeathPayload(sessionName, fmt.Sprintf("%s/polecats/%s", rigName, polecatName),
+			fmt.Sprintf("idle-reap: %s, idle %v (threshold %v)", reason, idleDuration.Truncate(time.Second), timeout),
+			"daemon"))
 }
 
 // cleanupOrphanedProcesses kills orphaned claude subagent processes.

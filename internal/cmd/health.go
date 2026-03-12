@@ -172,7 +172,7 @@ func checkServerHealth(townRoot string) *ServerHealth {
 }
 
 func checkDatabaseHealth(port int) []DatabaseHealth {
-	productionDBs := []string{"hq", "beads", "gastown"}
+	productionDBs := []string{"hq", "bd", "gt"}
 	var results []DatabaseHealth
 
 	for _, dbName := range productionDBs {
@@ -208,7 +208,7 @@ func checkDatabaseHealth(port int) []DatabaseHealth {
 }
 
 func checkPollution(port int) []PollutionRecord {
-	productionDBs := []string{"hq", "beads", "gastown"}
+	productionDBs := []string{"hq", "bd", "gt"}
 	var records []PollutionRecord
 
 	// Known pollution patterns to check in the issues table.
@@ -220,7 +220,7 @@ func checkPollution(port int) []PollutionRecord {
 		{"title LIKE '--%'", "--help artifacts"},
 		{"title LIKE 'Usage: %'", "CLI usage output"},
 		{"id LIKE 'offlinebrew-%'", "offlinebrew test prefix"},
-		{"id LIKE '%-wisp-%'", "wisp ID in issues table"},
+		{"id LIKE '%-wisp-%' AND (ephemeral IS NULL OR ephemeral = false)", "non-ephemeral wisp ID in issues table"},
 		{"title LIKE 'Test Issue%'", "test issue title"},
 		{"id LIKE 'test%'", "test ID prefix"},
 	}

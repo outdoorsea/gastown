@@ -33,6 +33,18 @@ func isNothingToCommit(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "nothing to commit")
 }
 
+// isTableNotFound returns true if the error indicates a missing table.
+// This happens when beads stores its data on a separate Dolt instance from
+// the gt Dolt server, so tables like issues/labels/dependencies don't exist
+// on the server the reaper connects to.
+func isTableNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "table not found") || strings.Contains(msg, "doesn't exist")
+}
+
 // DiscoverDatabases queries SHOW DATABASES on the Dolt server and returns
 // all production databases, filtering out system databases and test pollution.
 // Falls back to DefaultDatabases on any error.
@@ -170,18 +182,34 @@ func OpenDB(host string, port int, dbName string, readTimeout, writeTimeout time
 // Usage:
 //
 //	join, where := parentExcludeJoin(dbName)
-//	query := fmt.Sprintf("SELECT ... FROM `%s`.wisps w %s WHERE ... AND %s", dbName, join, where)
+//	query := fmt.Sprintf("SELECT ... FROM wisps w %s WHERE ... AND %s", dbName, join, where)
 func parentExcludeJoin(dbName string) (joinClause, whereCondition string) {
-	joinClause = fmt.Sprintf(
-		`LEFT JOIN (
-			SELECT DISTINCT wd.issue_id
-			FROM `+"`%s`"+`.wisp_dependencies wd
-			INNER JOIN `+"`%s`"+`.wisps parent ON parent.id = wd.depends_on_id
-			WHERE wd.type = 'parent-child'
-			AND parent.status IN ('open', 'hooked', 'in_progress')
-		) open_parent ON open_parent.issue_id = w.id`, dbName, dbName)
+	joinClause = `LEFT JOIN (
+		SELECT DISTINCT wd.issue_id
+		FROM wisp_dependencies wd
+		INNER JOIN wisps parent ON parent.id = wd.depends_on_id
+		WHERE wd.type = 'parent-child'
+		AND parent.status IN ('open', 'hooked', 'in_progress')
+	) open_parent ON open_parent.issue_id = w.id`
 	whereCondition = "open_parent.issue_id IS NULL"
 	return
+}
+
+// HasReaperSchema checks whether the database has the tables required for reaper
+// operations (wisps and issues). Returns false (no error) when tables are missing
+// — callers use this to skip databases that have incomplete beads schema (e.g.
+// partially initialized databases on the central Dolt server).
+func HasReaperSchema(db *sql.DB) (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var count int
+	err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('wisps', 'issues') AND table_schema = DATABASE()").Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("check reaper schema: %w", err)
+	}
+	return count >= 2, nil
 }
 
 // Scan counts reaper candidates in a database without modifying anything.
@@ -196,8 +224,8 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 	// Count reap candidates: open wisps past max_age with eligible parent status.
 	// Uses LEFT JOIN anti-pattern instead of correlated EXISTS to avoid O(n*m) cost (gt-jd1z).
 	reapQuery := fmt.Sprintf(
-		"SELECT COUNT(*) FROM `%s`.wisps w %s WHERE w.status IN ('open', 'hooked', 'in_progress') AND w.created_at < ? AND %s",
-		dbName, parentJoin, parentWhere)
+		"SELECT COUNT(*) FROM wisps w %s WHERE w.status IN ('open', 'hooked', 'in_progress') AND w.created_at < ? AND %s",
+		parentJoin, parentWhere)
 	if err := db.QueryRowContext(ctx, reapQuery, now.Add(-maxAge)).Scan(&result.ReapCandidates); err != nil {
 		return nil, fmt.Errorf("count reap candidates: %w", err)
 	}
@@ -206,54 +234,58 @@ func Scan(db *sql.DB, dbName string, maxAge, purgeAge, mailDeleteAge, staleIssue
 	// No parent check needed — closed wisps past the delete age are unconditionally purgeable.
 	// The parent check (correlated subqueries on wisp_dependencies) was causing O(n*m) query
 	// cost with 1800+ closed wisps, leading to CPU spikes and connection timeouts (gt-wvd2).
-	purgeQuery := fmt.Sprintf(
-		"SELECT COUNT(*) FROM `%s`.wisps w WHERE w.status = 'closed' AND w.closed_at < ?",
-		dbName)
+	purgeQuery := "SELECT COUNT(*) FROM wisps w WHERE w.status = 'closed' AND w.closed_at < ?"
 	if err := db.QueryRowContext(ctx, purgeQuery, now.Add(-purgeAge)).Scan(&result.PurgeCandidates); err != nil {
 		return nil, fmt.Errorf("count purge candidates: %w", err)
 	}
 
 	// Count mail candidates.
-	mailQuery := fmt.Sprintf(
-		"SELECT COUNT(*) FROM `%s`.issues WHERE status = 'closed' AND closed_at < ? AND id IN (SELECT issue_id FROM `%s`.labels WHERE label = 'gt:message')",
-		dbName, dbName)
+	// The issues/labels tables may not exist on the gt Dolt server if beads
+	// stores its data on a separate Dolt instance. Skip gracefully.
+	mailQuery := "SELECT COUNT(*) FROM issues WHERE status = 'closed' AND closed_at < ? AND id IN (SELECT issue_id FROM labels WHERE label = 'gt:message')"
 	if err := db.QueryRowContext(ctx, mailQuery, now.Add(-mailDeleteAge)).Scan(&result.MailCandidates); err != nil {
-		return nil, fmt.Errorf("count mail candidates: %w", err)
+		if !isTableNotFound(err) {
+			return nil, fmt.Errorf("count mail candidates: %w", err)
+		}
+		// issues/labels table not on this server — skip mail count
 	}
 
 	// Count stale issue candidates.
-	staleQuery := fmt.Sprintf(`
-		SELECT COUNT(*) FROM `+"`%s`"+`.issues i
+	// Same caveat: issues/dependencies tables may live on a separate Dolt instance.
+	staleQuery := `
+		SELECT COUNT(*) FROM issues i
 		WHERE i.status IN ('open', 'in_progress')
 		AND i.updated_at < ?
 		AND i.priority > 1
 		AND i.issue_type != 'epic'
 		AND i.id NOT IN (
-			SELECT DISTINCT d.issue_id FROM `+"`%s`"+`.dependencies d
-			INNER JOIN `+"`%s`"+`.issues dep ON d.depends_on_id = dep.id
+			SELECT DISTINCT d.issue_id FROM dependencies d
+			INNER JOIN issues dep ON d.depends_on_id = dep.id
 			WHERE dep.status IN ('open', 'in_progress')
 		)
 		AND i.id NOT IN (
-			SELECT DISTINCT d.depends_on_id FROM `+"`%s`"+`.dependencies d
-			INNER JOIN `+"`%s`"+`.issues blocker ON d.issue_id = blocker.id
+			SELECT DISTINCT d.depends_on_id FROM dependencies d
+			INNER JOIN issues blocker ON d.issue_id = blocker.id
 			WHERE blocker.status IN ('open', 'in_progress')
-		)`, dbName, dbName, dbName, dbName, dbName)
+		)`
 	if err := db.QueryRowContext(ctx, staleQuery, now.Add(-staleIssueAge)).Scan(&result.StaleCandidates); err != nil {
-		return nil, fmt.Errorf("count stale candidates: %w", err)
+		if !isTableNotFound(err) {
+			return nil, fmt.Errorf("count stale candidates: %w", err)
+		}
+		// issues/dependencies table not on this server — skip stale count
 	}
 
 	// Total open wisps.
-	openQuery := fmt.Sprintf(
-		"SELECT COUNT(*) FROM `%s`.wisps WHERE status IN ('open', 'hooked', 'in_progress')", dbName) //nolint:gosec // G201: dbName validated
+	openQuery := "SELECT COUNT(*) FROM wisps WHERE status IN ('open', 'hooked', 'in_progress')"
 	if err := db.QueryRowContext(ctx, openQuery).Scan(&result.OpenWisps); err != nil {
 		return nil, fmt.Errorf("count open wisps: %w", err)
 	}
 
 	// Anomaly detection: dangling parent references.
-	danglingQuery := fmt.Sprintf(`
-		SELECT COUNT(*) FROM `+"`%s`"+`.wisp_dependencies wd
-		LEFT JOIN `+"`%s`"+`.wisps parent ON parent.id = wd.depends_on_id
-		WHERE wd.type = 'parent-child' AND parent.id IS NULL`, dbName, dbName)
+	danglingQuery := `
+		SELECT COUNT(*) FROM wisp_dependencies wd
+		LEFT JOIN wisps parent ON parent.id = wd.depends_on_id
+		WHERE wd.type = 'parent-child' AND parent.id IS NULL`
 	var danglingCount int
 	if err := db.QueryRowContext(ctx, danglingQuery).Scan(&danglingCount); err == nil && danglingCount > 0 {
 		result.Anomalies = append(result.Anomalies, Anomaly{
@@ -275,18 +307,19 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 
 	cutoff := time.Now().UTC().Add(-maxAge)
 	parentJoin, parentWhere := parentExcludeJoin(dbName)
+	// Exclude agent beads (issue_type='agent') from reaping — they have persistent
+	// identity and should not be closed by the wisp reaper regardless of age.
 	whereClause := fmt.Sprintf(
-		"w.status IN ('open', 'hooked', 'in_progress') AND w.created_at < ? AND %s", parentWhere)
+		"w.status IN ('open', 'hooked', 'in_progress') AND w.created_at < ? AND w.issue_type != 'agent' AND %s", parentWhere)
 
 	result := &ReapResult{Database: dbName, DryRun: dryRun}
 
 	if dryRun {
-		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `%s`.wisps w %s WHERE %s", dbName, parentJoin, whereClause)
+		countQuery := fmt.Sprintf("SELECT COUNT(*) FROM wisps w %s WHERE %s", parentJoin, whereClause)
 		if err := db.QueryRowContext(ctx, countQuery, cutoff).Scan(&result.Reaped); err != nil {
 			return nil, fmt.Errorf("dry-run count: %w", err)
 		}
-		openQuery := fmt.Sprintf(
-			"SELECT COUNT(*) FROM `%s`.wisps WHERE status IN ('open', 'hooked', 'in_progress')", dbName) //nolint:gosec // G201: dbName validated
+		openQuery := "SELECT COUNT(*) FROM wisps WHERE status IN ('open', 'hooked', 'in_progress')"
 		if err := db.QueryRowContext(ctx, openQuery).Scan(&result.OpenRemain); err != nil {
 			return nil, fmt.Errorf("count open: %w", err)
 		}
@@ -304,8 +337,8 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 	// This avoids holding a write lock on the entire table for minutes.
 	// Uses LEFT JOIN anti-pattern instead of correlated EXISTS to avoid O(n*m) cost (gt-jd1z).
 	idQuery := fmt.Sprintf(
-		"SELECT w.id FROM `%s`.wisps w %s WHERE %s LIMIT %d",
-		dbName, parentJoin, whereClause, DefaultBatchSize)
+		"SELECT w.id FROM wisps w %s WHERE %s LIMIT %d",
+		parentJoin, whereClause, DefaultBatchSize)
 
 	totalReaped := 0
 	for {
@@ -338,8 +371,8 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 		inClause := strings.Join(placeholders, ",")
 
 		updateQuery := fmt.Sprintf(
-			"UPDATE `%s`.wisps SET status='closed', closed_at=NOW() WHERE id IN (%s)",
-			dbName, inClause) //nolint:gosec // G201: dbName validated, inClause is parameterized
+			"UPDATE wisps SET status='closed', closed_at=NOW() WHERE id IN (%s)",
+			inClause)
 		sqlResult, err := db.ExecContext(ctx, updateQuery, args...)
 		if err != nil {
 			return nil, fmt.Errorf("close stale wisps batch: %w", err)
@@ -371,8 +404,7 @@ func Reap(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ReapRe
 		}
 	}
 
-	openQuery := fmt.Sprintf(
-		"SELECT COUNT(*) FROM `%s`.wisps WHERE status IN ('open', 'hooked', 'in_progress')", dbName) //nolint:gosec // G201: dbName validated
+	openQuery := "SELECT COUNT(*) FROM wisps WHERE status IN ('open', 'hooked', 'in_progress')"
 	if err := db.QueryRowContext(ctx, openQuery).Scan(&result.OpenRemain); err != nil {
 		return result, fmt.Errorf("count open: %w", err)
 	}
@@ -413,9 +445,7 @@ func purgeClosedWisps(db *sql.DB, dbName string, purgeAge time.Duration, dryRun 
 	// No parent check — closed wisps past the delete age are unconditionally purgeable.
 	// The parent check (correlated subqueries on wisp_dependencies) was causing O(n*m)
 	// query cost with 1800+ closed wisps, leading to CPU spikes and timeouts (gt-wvd2).
-	digestQuery := fmt.Sprintf(
-		"SELECT COALESCE(w.wisp_type, 'unknown') AS wtype, COUNT(*) AS cnt FROM `%s`.wisps w WHERE w.status = 'closed' AND w.closed_at < ? GROUP BY wtype",
-		dbName)
+	digestQuery := "SELECT COALESCE(w.wisp_type, 'unknown') AS wtype, COUNT(*) AS cnt FROM wisps w WHERE w.status = 'closed' AND w.closed_at < ? GROUP BY wtype"
 	rows, err := db.QueryContext(ctx, digestQuery, deleteCutoff)
 	if err != nil {
 		return 0, nil, fmt.Errorf("digest query: %w", err)
@@ -449,8 +479,8 @@ func purgeClosedWisps(db *sql.DB, dbName string, purgeAge time.Duration, dryRun 
 
 	// Batch delete — simple status+age filter, no parent check needed for purge.
 	idQuery := fmt.Sprintf(
-		"SELECT w.id FROM `%s`.wisps w WHERE w.status = 'closed' AND w.closed_at < ? LIMIT %d",
-		dbName, DefaultBatchSize)
+		"SELECT w.id FROM wisps w WHERE w.status = 'closed' AND w.closed_at < ? LIMIT %d",
+		DefaultBatchSize)
 	auxTables := []string{"wisp_labels", "wisp_comments", "wisp_events", "wisp_dependencies"}
 
 	totalDeleted, err := batchDeleteRows(ctx, db, dbName, idQuery, deleteCutoff, "wisps", auxTables)
@@ -491,6 +521,9 @@ func purgeOldMail(db *sql.DB, dbName string, mailDeleteAge time.Duration, dryRun
 		dbName, dbName)
 	var count int
 	if err := db.QueryRowContext(ctx, countQuery, mailCutoff).Scan(&count); err != nil {
+		if isTableNotFound(err) {
+			return 0, nil // issues/labels not on this server
+		}
 		return 0, fmt.Errorf("count mail: %w", err)
 	}
 	if count == 0 {
@@ -533,7 +566,8 @@ func purgeOldMail(db *sql.DB, dbName string, mailDeleteAge time.Duration, dryRun
 }
 
 // AutoClose closes issues that have been open with no updates past staleAge.
-// Excludes P0/P1 priority, epics, and issues with active dependencies.
+// Excludes P0/P1 priority, epics, hooked/pinned issues, standing-order labels,
+// and issues with active dependencies.
 func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (*AutoCloseResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), DefaultQueryTimeout)
 	defer cancel()
@@ -547,6 +581,10 @@ func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (
 		AND i.priority > 1
 		AND i.issue_type != 'epic'
 		AND i.id NOT IN (
+			SELECT DISTINCT l.issue_id FROM `+"`%s`"+`.labels l
+			WHERE l.label IN ('gt:standing-orders', 'gt:keep', 'gt:role', 'gt:rig')
+		)
+		AND i.id NOT IN (
 			SELECT DISTINCT d.issue_id FROM `+"`%s`"+`.dependencies d
 			INNER JOIN `+"`%s`"+`.issues dep ON d.depends_on_id = dep.id
 			WHERE dep.status IN ('open', 'in_progress')
@@ -555,13 +593,16 @@ func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (
 			SELECT DISTINCT d.depends_on_id FROM `+"`%s`"+`.dependencies d
 			INNER JOIN `+"`%s`"+`.issues blocker ON d.issue_id = blocker.id
 			WHERE blocker.status IN ('open', 'in_progress')
-		)`, dbName, dbName, dbName, dbName)
+		)`, dbName, dbName, dbName, dbName, dbName)
 
 	// Two-step SELECT-then-UPDATE to avoid self-referencing subquery in UPDATE,
 	// which is not valid MySQL (Error 1093) and fragile in Dolt (dolthub/dolt#10600).
-	selectQuery := fmt.Sprintf("SELECT i.id FROM `%s`.issues i WHERE %s", dbName, whereClause)
+	selectQuery := fmt.Sprintf("SELECT i.id FROM issues i WHERE %s", whereClause)
 	rows, err := db.QueryContext(ctx, selectQuery, staleCutoff)
 	if err != nil {
+		if isTableNotFound(err) {
+			return result, nil // issues/dependencies not on this server
+		}
 		return nil, fmt.Errorf("select stale: %w", err)
 	}
 	var ids []string
@@ -628,7 +669,7 @@ func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (
 }
 
 // batchDeleteRows deletes rows from a primary table and its auxiliary tables in batches.
-func batchDeleteRows(ctx context.Context, db *sql.DB, dbName string, idQuery string, cutoffArg time.Time, primaryTable string, auxTables []string) (int, error) {
+func batchDeleteRows(ctx context.Context, db *sql.DB, _ string, idQuery string, cutoffArg time.Time, primaryTable string, auxTables []string) (int, error) {
 	totalDeleted := 0
 	for {
 		idRows, err := db.QueryContext(ctx, idQuery, cutoffArg)
@@ -660,19 +701,19 @@ func batchDeleteRows(ctx context.Context, db *sql.DB, dbName string, idQuery str
 		inClause := "(" + strings.Join(placeholders, ",") + ")"
 
 		for _, tbl := range auxTables {
-			delAux := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE issue_id IN %s", dbName, tbl, inClause) //nolint:gosec // G201: dbName and tbl are internal
+			delAux := fmt.Sprintf("DELETE FROM `%s` WHERE issue_id IN %s", tbl, inClause) //nolint:gosec // G201: tbl is internal
 			if _, err := db.ExecContext(ctx, delAux, args...); err != nil {
 				// Non-fatal: log and continue.
 			}
 		}
 
 		// Clean up reverse dependency references to prevent dangling parent refs.
-		delReverse := fmt.Sprintf("DELETE FROM `%s`.`wisp_dependencies` WHERE depends_on_id IN %s", dbName, inClause) //nolint:gosec // G201: internal
+		delReverse := fmt.Sprintf("DELETE FROM wisp_dependencies WHERE depends_on_id IN %s", inClause)
 		if _, err := db.ExecContext(ctx, delReverse, args...); err != nil {
 			// Non-fatal.
 		}
 
-		delPrimary := fmt.Sprintf("DELETE FROM `%s`.`%s` WHERE id IN %s", dbName, primaryTable, inClause) //nolint:gosec // G201: internal
+		delPrimary := fmt.Sprintf("DELETE FROM `%s` WHERE id IN %s", primaryTable, inClause) //nolint:gosec // G201: primaryTable is internal
 		sqlResult, err := db.ExecContext(ctx, delPrimary, args...)
 		if err != nil {
 			return totalDeleted, fmt.Errorf("delete %s batch: %w", primaryTable, err)

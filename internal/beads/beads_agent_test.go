@@ -1,6 +1,122 @@
 package beads
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+)
+
+func installMockBDFixedShowOutput(t *testing.T, showOutput string) {
+	t.Helper()
+
+	binDir := t.TempDir()
+	if runtime.GOOS == "windows" {
+		scriptPath := filepath.Join(binDir, "bd.cmd")
+		script := "@echo off\r\n" +
+			"setlocal EnableDelayedExpansion\r\n" +
+			"set \"cmd=\"\r\n" +
+			":findcmd\r\n" +
+			"if \"%~1\"==\"\" goto havecmd\r\n" +
+			"set \"arg=%~1\"\r\n" +
+			"if /I \"!arg:~0,2!\"==\"--\" (\r\n" +
+			"  shift\r\n" +
+			"  goto findcmd\r\n" +
+			")\r\n" +
+			"set \"cmd=%~1\"\r\n" +
+			":havecmd\r\n" +
+			"if /I \"%cmd%\"==\"version\" exit /b 0\r\n" +
+			"if /I \"%cmd%\"==\"show\" (\r\n" +
+			"  echo(%MOCK_BD_SHOW_OUTPUT%\r\n" +
+			"  exit /b 0\r\n" +
+			")\r\n" +
+			"exit /b 0\r\n"
+		if err := os.WriteFile(scriptPath, []byte(script), 0644); err != nil {
+			t.Fatalf("write mock bd: %v", err)
+		}
+		t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		t.Setenv("MOCK_BD_SHOW_OUTPUT", showOutput)
+		return
+	}
+
+	script := `#!/bin/sh
+cmd=""
+for arg in "$@"; do
+  case "$arg" in
+    --*) ;;
+    *) cmd="$arg"; break ;;
+  esac
+done
+
+case "$cmd" in
+  version)
+    exit 0
+    ;;
+  show)
+    printf '%s\n' "$MOCK_BD_SHOW_OUTPUT"
+    exit 0
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+`
+	scriptPath := filepath.Join(binDir, "bd")
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write mock bd: %v", err)
+	}
+
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MOCK_BD_SHOW_OUTPUT", showOutput)
+}
+
+func TestGetAgentBead_PrefersStructuredAgentState(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+
+	installMockBDFixedShowOutput(t, `[{"id":"gt-gastown-polecat-nux","title":"Polecat nux","issue_type":"agent","labels":["gt:agent"],"description":"role_type: polecat\nrig: gastown\nagent_state: spawning\nhook_bead: null","agent_state":"idle"}]`)
+
+	bd := NewIsolated(tmpDir)
+	issue, fields, err := bd.GetAgentBead("gt-gastown-polecat-nux")
+	if err != nil {
+		t.Fatalf("GetAgentBead: %v", err)
+	}
+	if issue == nil {
+		t.Fatal("GetAgentBead returned nil issue")
+	}
+	if fields == nil {
+		t.Fatal("GetAgentBead returned nil fields")
+	}
+	if issue.AgentState != "idle" {
+		t.Fatalf("issue.AgentState = %q, want %q", issue.AgentState, "idle")
+	}
+	if fields.AgentState != "idle" {
+		t.Fatalf("fields.AgentState = %q, want %q", fields.AgentState, "idle")
+	}
+}
+
+func TestGetAgentBead_FallsBackToDescriptionAgentState(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir .beads: %v", err)
+	}
+
+	installMockBDFixedShowOutput(t, `[{"id":"gt-gastown-polecat-nux","title":"Polecat nux","issue_type":"agent","labels":["gt:agent"],"description":"role_type: polecat\nrig: gastown\nagent_state: spawning\nhook_bead: null"}]`)
+
+	bd := NewIsolated(tmpDir)
+	_, fields, err := bd.GetAgentBead("gt-gastown-polecat-nux")
+	if err != nil {
+		t.Fatalf("GetAgentBead: %v", err)
+	}
+	if fields == nil {
+		t.Fatal("GetAgentBead returned nil fields")
+	}
+	if fields.AgentState != "spawning" {
+		t.Fatalf("fields.AgentState = %q, want %q", fields.AgentState, "spawning")
+	}
+}
 
 func TestIsAgentBeadByID(t *testing.T) {
 	tests := []struct {
