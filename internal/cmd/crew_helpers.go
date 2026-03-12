@@ -15,7 +15,16 @@ import (
 )
 
 // getCrewManager returns a crew manager for the specified or inferred rig.
-func getCrewManager(rigName string) (*crew.Manager, *rig.Rig, error) {
+// An optional crewHint (crew member name) enables cross-rig lookup when the
+// rig cannot be inferred from the current directory. If exactly one rig has a
+// crew member with that name, it is used automatically. Pass no hint (or "")
+// to preserve the existing cwd-inference-only behaviour.
+func getCrewManager(rigName string, crewHint ...string) (*crew.Manager, *rig.Rig, error) {
+	hint := ""
+	if len(crewHint) > 0 {
+		hint = crewHint[0]
+	}
+
 	// Handle optional rig inference from cwd
 	if rigName == "" {
 		townRoot, err := workspace.FindFromCwdOrError()
@@ -24,7 +33,16 @@ func getCrewManager(rigName string) (*crew.Manager, *rig.Rig, error) {
 		}
 		rigName, err = inferRigFromCwd(townRoot)
 		if err != nil {
-			return nil, nil, fmt.Errorf("could not determine rig (use --rig flag): %w", err)
+			// cwd inference failed — try cross-rig lookup by crew name if provided.
+			if hint != "" {
+				found, searchErr := findRigForCrew(townRoot, hint)
+				if searchErr != nil {
+					return nil, nil, searchErr
+				}
+				rigName = found
+			} else {
+				return nil, nil, fmt.Errorf("could not determine rig (use --rig flag): %w", err)
+			}
 		}
 	}
 
@@ -110,6 +128,35 @@ func parseCrewSessionName(sessionName string) (rigName, crewName, prefix string,
 		return "", "", "", false
 	}
 	return identity.Rig, identity.Name, identity.Prefix, true
+}
+
+// findRigForCrew searches all rigs in the town for a crew member named crewName.
+// Returns the rig name if exactly one rig has that crew member; errors on
+// ambiguity (multiple rigs) or absence (no rigs).
+func findRigForCrew(townRoot, crewName string) (string, error) {
+	allRigs, _, err := getAllRigs()
+	if err != nil {
+		return "", fmt.Errorf("could not list rigs: %w", err)
+	}
+
+	var matches []string
+	for _, r := range allRigs {
+		crewGit := git.NewGit(r.Path)
+		mgr := crew.NewManager(r, crewGit)
+		if _, err := mgr.Get(crewName); err == nil {
+			matches = append(matches, r.Name)
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", fmt.Errorf("crew member %q not found in any rig (use --rig to specify)", crewName)
+	case 1:
+		return matches[0], nil
+	default:
+		return "", fmt.Errorf("crew member %q exists in multiple rigs (%s) — use --rig to disambiguate",
+			crewName, strings.Join(matches, ", "))
+	}
 }
 
 // findRigCrewSessions returns all crew sessions for a given rig.
