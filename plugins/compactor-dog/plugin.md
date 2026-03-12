@@ -166,19 +166,23 @@ while IFS= read -r DB; do
     --host "$DOLT_HOST" --port "$DOLT_PORT" -u "$DOLT_USER" \
     -d "$DB" --result-format csv 2>/dev/null \
     | tail -1 | tr -d '\r')
-  OLDEST_MINUTES=$(dolt sql -q "SELECT TIMESTAMPDIFF(MINUTE, MIN(date), NOW()) FROM dolt_log" \
+  # Age of NEWEST commit (not oldest — oldest is always the init root commit).
+  # After a flatten: 2 commits total, newest is the flatten commit from moments ago.
+  # After normal growth: many commits, newest is recent activity.
+  NEWEST_MINUTES=$(dolt sql -q "SELECT TIMESTAMPDIFF(MINUTE, MAX(date), NOW()) FROM dolt_log" \
     --host "$DOLT_HOST" --port "$DOLT_PORT" -u "$DOLT_USER" \
     -d "$DB" --result-format csv 2>/dev/null \
     | tail -1 | tr -d '\r')
   if [ "${COUNT:-0}" -le 5 ]; then
     FLATTEN_CANDIDATES="$FLATTEN_CANDIDATES $DB(${COUNT})"
   fi
-  # If oldest commit is < 120 minutes old, this DB was flattened very recently.
+  # Post-flatten detection: count ≤ 10 AND newest commit is < 120 min old.
+  # This combination means: just flattened, still in churn settling window.
   # Post-flatten mail acks generate 10-15 commits/cycle which looks like runaway
-  # growth but is just delivery churn settling. Don't escalate for this.
-  if [ -n "$OLDEST_MINUTES" ] && [ "${OLDEST_MINUTES:-9999}" -lt 120 ]; then
-    RECENTLY_FLATTENED_DBS="$RECENTLY_FLATTENED_DBS $DB(${OLDEST_MINUTES}min)"
-    echo "  $DB: flattened ~${OLDEST_MINUTES}min ago — suppressing escalation for post-flatten churn"
+  # growth but is just delivery churn. Don't escalate for 2h after flatten.
+  if [ "${COUNT:-9999}" -le 50 ] && [ -n "$NEWEST_MINUTES" ] && [ "${NEWEST_MINUTES:-9999}" -lt 120 ]; then
+    RECENTLY_FLATTENED_DBS="$RECENTLY_FLATTENED_DBS $DB(newest=${NEWEST_MINUTES}min,count=${COUNT})"
+    echo "  $DB: recently flattened (count=${COUNT}, newest commit ${NEWEST_MINUTES}min ago) — suppressing escalation for post-flatten churn"
   fi
 done <<< "$PROD_DBS"
 
