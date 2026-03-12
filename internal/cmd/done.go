@@ -1217,6 +1217,17 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) {
 		// gt done to skip closing the bead, leaving it as unassigned open work after
 		// the hook was cleared — triggering infinite dispatch loops.
 		if hookedBead, err := bd.Show(hookedBeadID); err == nil && !beads.IssueStatus(hookedBead.Status).IsTerminal() {
+			// Guard: never close a rig identity bead. Polecats are dispatched with the
+			// rig bead as their hook when using mol-polecat-work, but the rig bead is
+			// permanent infrastructure — it must survive across polecat sessions.
+			// If the polecat found no work and calls gt done, we skip the close and
+			// leave the rig bead open for the witness to detect and report.
+			if beads.HasLabel(hookedBead, "gt:rig") {
+				fmt.Fprintf(os.Stderr, "Note: hooked bead %s is a rig identity bead (gt:rig) — skipping close\n", hookedBeadID)
+				// Fall through to set agent state to idle and clean up normally.
+				goto doneStateUpdate
+			}
+
 			// BUG FIX: Close attached molecule (wisp) BEFORE closing hooked bead.
 			// When using formula-on-bead (gt sling formula --on bead), the base bead
 			// has attached_molecule pointing to the wisp. Without this fix, gt done
@@ -1258,6 +1269,7 @@ func updateAgentStateOnDone(cwd, townRoot, exitType, issueID string) {
 		}
 	}
 
+doneStateUpdate:
 	// No ClearHookBead call needed — agent bead hook slot is no longer maintained (hq-l6mm5).
 
 	// Self-managed completion (gt-1qlg, polecat-self-managed-completion.md Phase 2):
