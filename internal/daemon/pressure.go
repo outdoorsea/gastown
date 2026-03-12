@@ -40,7 +40,7 @@ type PressureResult struct {
 //   - Polecats (dispatchQueuedWork, crash restarts)
 //   - Refineries
 //   - Dogs
-func (d *Daemon) checkPressure(role string) PressureResult {
+func (d *Daemon) checkPressure(_ string) PressureResult {
 	cfg := d.loadOperationalConfig().GetDaemonConfig()
 
 	cpuThreshold := cfg.PressureCPUThresholdV()

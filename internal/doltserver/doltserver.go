@@ -2599,7 +2599,7 @@ func EnsureAllMetadata(townRoot string) (updated []string, errs []error) {
 	// Map from DB prefix to rig directory name, e.g. "be" -> "beads_el".
 	// Merge routes.jsonl (routes) and rigs.json (prefixes); rigs.json wins on
 	// conflict. Rigs where db-name == rig-dir-name are not in this map and fall
-	// through to the default behaviour (rigName = dbName).
+	// through to the default behavior (rigName = dbName).
 	dbToRig := buildDatabaseToRigMap(townRoot)
 	for k, v := range buildRigPrefixMap(townRoot) {
 		dbToRig[k] = v

@@ -418,21 +418,27 @@ func init() {
 	rootCmd.AddCommand(convoyCmd)
 }
 
-// getTownBeadsDir returns the path to town-level beads directory.
+// getTownBeadsDir returns the town root directory for bd commands.
+// Convoy commands run bd from town root (not .beads/) so bd discovers
+// the correct database via its own workspace detection.
 func getTownBeadsDir() (string, error) {
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return "", fmt.Errorf("not in a Gas Town workspace: %w", err)
 	}
-	return filepath.Join(townRoot, ".beads"), nil
+	return townRoot, nil
 }
 
 // runBdJSON runs a bd command, captures stdout as JSON output. If the command
 // fails, the error includes bd's stderr for diagnostics instead of a bare
-// "exit status 1".
+// "exit status 1". BEADS_DIR is stripped from the subprocess environment to
+// prevent stale overrides from interfering with bd's workspace detection.
 func runBdJSON(dir string, args ...string) ([]byte, error) {
 	cmd := exec.Command("bd", args...)
 	cmd.Dir = dir
+	// Strip BEADS_DIR so bd discovers the correct database from cmd.Dir
+	// rather than using an inherited (possibly wrong) override.
+	cmd.Env = stripEnvKey(os.Environ(), "BEADS_DIR")
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -446,6 +452,7 @@ func runBdJSON(dir string, args ...string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+
 // bdDepListRawIDs queries the raw dependencies table via bd sql to get
 // dependency target IDs. Unlike bd dep list, this does NOT join with the
 // issues table, so it works for cross-database dependencies where the
@@ -456,7 +463,7 @@ func runBdJSON(dir string, args ...string) ([]byte, error) {
 // depType filters by dependency type (e.g., "tracks", "blocks"); empty means all types.
 //
 // Returns deduplicated, unwrapped issue IDs (external:prefix:id → id).
-func bdDepListRawIDs(dir, issueID, direction, depType string) ([]string, error) {
+func bdDepListRawIDs(dir, issueID, direction, depType string) ([]string, error) { //nolint:unparam // depType kept for API generality; callers currently only use "tracks"
 	// Determine query columns based on direction.
 	// "down": issueID depends on targets → SELECT depends_on_id WHERE issue_id = ?
 	// "up":   issueID is depended on → SELECT issue_id WHERE depends_on_id = ?
@@ -1696,13 +1703,8 @@ func runConvoyStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get convoy details
-	showArgs := []string{"show", convoyID, "--json"}
-	showCmd := exec.Command("bd", showArgs...)
-	showCmd.Dir = townBeads
-	var stdout bytes.Buffer
-	showCmd.Stdout = &stdout
-
-	if err := showCmd.Run(); err != nil {
+	showOut, err := runBdJSON(townBeads, "show", convoyID, "--json")
+	if err != nil {
 		return fmt.Errorf("convoy '%s' not found", convoyID)
 	}
 
@@ -1717,7 +1719,7 @@ func runConvoyStatus(cmd *cobra.Command, args []string) error {
 		DependsOn   []string `json:"depends_on,omitempty"`
 		Labels      []string `json:"labels,omitempty"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &convoys); err != nil {
+	if err := json.Unmarshal(showOut, &convoys); err != nil {
 		return fmt.Errorf("parsing convoy data: %w", err)
 	}
 
@@ -1883,14 +1885,17 @@ func runConvoyList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// List convoy-type issues
+	// List convoy-type issues.
 	listArgs := []string{"list", "--type=convoy", "--json"}
 	if convoyListStatus != "" {
 		listArgs = append(listArgs, "--status="+convoyListStatus)
 	} else if convoyListAll {
 		listArgs = append(listArgs, "--all")
 	}
-	// Default (no flags) = open only (bd's default behavior)
+	// --flat is required because bd's tree mode doesn't produce valid JSON
+	// even with --json (bd v0.59+). Appended last so flag order matches
+	// bd's expected argument pattern.
+	listArgs = append(listArgs, "--flat")
 
 	out, err := runBdJSON(townBeads, listArgs...)
 	if err != nil {
@@ -2131,16 +2136,24 @@ func applyFreshIssueDetails(dep *trackedDependency, details *issueDetails) {
 // getTrackedIssues gets issues tracked by a convoy with fresh cross-rig details.
 // Returns issue details including status, type, and worker info.
 //
-// Uses bdDepListRawIDs to query the raw dependencies table (bypasses the JOIN
-// that bd dep list does, which fails for cross-database deps — see GH #2624).
-// Then fetches fresh issue details via bd show with prefix routing.
+// Uses bd dep list to query tracked dependencies. If dep list returns empty
+// (e.g., cross-database deps where the JOIN fails — see GH #2624), falls back
+// to bd show and extracts tracked dependencies from the convoy's dependencies
+// array. Then fetches fresh issue details via bd show with prefix routing.
 func getTrackedIssues(townBeads, convoyID string) ([]trackedIssueInfo, error) {
-	// Query raw dependency IDs from the dependencies table. This works for
-	// cross-database deps because it only reads the dependency records (which
-	// live in HQ) without trying to JOIN with the issues table.
-	trackedIDs, err := bdDepListRawIDs(townBeads, convoyID, "down", "tracks")
+	// Try bd dep list first — the standard dependency query path.
+	trackedIDs, err := bdDepListTracked(townBeads, convoyID)
 	if err != nil {
 		return nil, fmt.Errorf("querying tracked issues for %s: %w", convoyID, err)
+	}
+
+	// Fallback: when dep list returns empty (common for cross-database deps),
+	// parse tracked dependencies from bd show output.
+	if len(trackedIDs) == 0 {
+		trackedIDs, err = bdShowTrackedDeps(townBeads, convoyID)
+		if err != nil {
+			return nil, fmt.Errorf("fallback show for tracked deps of %s: %w", convoyID, err)
+		}
 	}
 
 	if len(trackedIDs) == 0 {
@@ -2198,7 +2211,69 @@ func getTrackedIssues(townBeads, convoyID string) ([]trackedIssueInfo, error) {
 	return tracked, nil
 }
 
+// bdDepListTracked runs `bd dep list <convoyID> --direction=down --type=tracks --json`
+// and returns the tracked issue IDs (unwrapped from external: prefixes).
+func bdDepListTracked(dir, convoyID string) ([]string, error) {
+	out, err := runBdJSON(dir, "dep", "list", convoyID, "--direction=down", "--type=tracks", "--json")
+	if err != nil {
+		return nil, err
+	}
+
+	var results []struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(out, &results); err != nil {
+		return nil, fmt.Errorf("parsing dep list for %s: %w", convoyID, err)
+	}
+
+	seen := make(map[string]bool, len(results))
+	var ids []string
+	for _, r := range results {
+		id := beads.ExtractIssueID(r.ID)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
+// bdShowTrackedDeps falls back to `bd show <convoyID> --json` and extracts
+// tracked dependency IDs from the convoy's dependencies array.
+// This handles cross-database dependencies where bd dep list returns empty.
+func bdShowTrackedDeps(dir, convoyID string) ([]string, error) {
+	out, err := runBdJSON(dir, "show", convoyID, "--json")
+	if err != nil {
+		return nil, err
+	}
+
+	var results []struct {
+		Dependencies []issueDependency `json:"dependencies"`
+	}
+	if err := json.Unmarshal(out, &results); err != nil {
+		return nil, fmt.Errorf("parsing show for %s: %w", convoyID, err)
+	}
+	if len(results) == 0 {
+		return nil, nil
+	}
+
+	seen := make(map[string]bool)
+	var ids []string
+	for _, dep := range results[0].Dependencies {
+		if dep.DependencyType != "tracks" {
+			continue
+		}
+		id := beads.ExtractIssueID(dep.ID)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
+}
+
 type issueDependency struct {
+	ID             string `json:"id"`
 	Status         string `json:"status"`
 	DependencyType string `json:"dependency_type"`
 }

@@ -124,7 +124,8 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 		// GT_ROLE must be set so startup command resolution can honor role_agents.dog.
 		env["GT_ROLE"] = "dog"
 		if cfg.AgentName != "" {
-			env["BD_ACTOR"] = fmt.Sprintf("dog/%s", cfg.AgentName)
+			env["GT_DOG_NAME"] = cfg.AgentName
+			env["BD_ACTOR"] = fmt.Sprintf("deacon/dogs/%s", cfg.AgentName)
 			env["GIT_AUTHOR_NAME"] = cfg.AgentName
 		} else {
 			env["BD_ACTOR"] = "dog"
@@ -268,11 +269,32 @@ func AgentEnv(cfg AgentEnvConfig) map[string]string {
 	// gt's central server instead of auto-starting rogue per-rig servers.
 	// Without this, bd falls back to its own discovery (.beads/dolt-server.port
 	// or auto-start), causing split-brain after reinstall/restart.
+	//
+	// Resolution: config file first, then process env fallback. Process env
+	// propagation ensures agent sessions inherit the port even when TownRoot
+	// is not set (e.g., AgentEnvSimple callers).
 	if cfg.TownRoot != "" {
 		if port := resolveDoltPort(cfg.TownRoot); port > 0 {
 			portStr := strconv.Itoa(port)
 			env["GT_DOLT_PORT"] = portStr
 			env["BEADS_DOLT_PORT"] = portStr
+		}
+	}
+	// Propagate GT_DOLT_PORT / BEADS_DOLT_PORT from process env when not
+	// already resolved from config. This covers sessions where TownRoot is
+	// empty or has no config.yaml (GH#2412).
+	if _, ok := env["GT_DOLT_PORT"]; !ok {
+		if v := os.Getenv("GT_DOLT_PORT"); v != "" {
+			env["GT_DOLT_PORT"] = v
+			// Also set BEADS_DOLT_PORT if not explicitly overridden in env.
+			if os.Getenv("BEADS_DOLT_PORT") == "" {
+				env["BEADS_DOLT_PORT"] = v
+			}
+		}
+	}
+	if _, ok := env["BEADS_DOLT_PORT"]; !ok {
+		if v := os.Getenv("BEADS_DOLT_PORT"); v != "" {
+			env["BEADS_DOLT_PORT"] = v
 		}
 	}
 
