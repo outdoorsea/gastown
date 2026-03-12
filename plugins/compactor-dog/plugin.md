@@ -154,21 +154,39 @@ RECENT_RUNS=$(bd list --label plugin:compactor-dog --status closed --json 2>/dev
   | jq -r '.[0].created_at // "never"' 2>/dev/null || echo "unknown")
 echo "  Last compactor run: $RECENT_RUNS"
 
-# Check for flatten evidence (single-commit history = recently flattened)
+# Check for flatten evidence:
+# - Single-commit history (count ≤ 5) = recently flattened
+# - Oldest commit < 2 hours ago = flattened very recently (suppress escalation to
+#   break feedback loop: post-flatten ack commits look like "runaway growth")
 FLATTEN_CANDIDATES=""
+RECENTLY_FLATTENED_DBS=""  # DBs flattened < 2h ago — exclude from hourly spike check
 while IFS= read -r DB; do
   [ -z "$DB" ] && continue
   COUNT=$(dolt sql -q "SELECT count(*) AS cnt FROM dolt_log" \
     --host "$DOLT_HOST" --port "$DOLT_PORT" -u "$DOLT_USER" \
     -d "$DB" --result-format csv 2>/dev/null \
     | tail -1 | tr -d '\r')
+  OLDEST_MINUTES=$(dolt sql -q "SELECT TIMESTAMPDIFF(MINUTE, MIN(date), NOW()) FROM dolt_log" \
+    --host "$DOLT_HOST" --port "$DOLT_PORT" -u "$DOLT_USER" \
+    -d "$DB" --result-format csv 2>/dev/null \
+    | tail -1 | tr -d '\r')
   if [ "${COUNT:-0}" -le 5 ]; then
     FLATTEN_CANDIDATES="$FLATTEN_CANDIDATES $DB(${COUNT})"
+  fi
+  # If oldest commit is < 120 minutes old, this DB was flattened very recently.
+  # Post-flatten mail acks generate 10-15 commits/cycle which looks like runaway
+  # growth but is just delivery churn settling. Don't escalate for this.
+  if [ -n "$OLDEST_MINUTES" ] && [ "${OLDEST_MINUTES:-9999}" -lt 120 ]; then
+    RECENTLY_FLATTENED_DBS="$RECENTLY_FLATTENED_DBS $DB(${OLDEST_MINUTES}min)"
+    echo "  $DB: flattened ~${OLDEST_MINUTES}min ago — suppressing escalation for post-flatten churn"
   fi
 done <<< "$PROD_DBS"
 
 if [ -n "$FLATTEN_CANDIDATES" ]; then
-  echo "  Recently flattened DBs:$FLATTEN_CANDIDATES"
+  echo "  Recently flattened DBs (≤5 commits):$FLATTEN_CANDIDATES"
+fi
+if [ -n "$RECENTLY_FLATTENED_DBS" ]; then
+  echo "  Post-flatten cooldown active (no escalation):$RECENTLY_FLATTENED_DBS"
 fi
 ```
 
@@ -212,16 +230,29 @@ gathered above and decide whether to escalate.
 
 **If you judge maintenance is needed:**
 
+First check if the flagged database was recently flattened (< 2h ago). If so,
+the high hourly rate is post-flatten mail-ack churn, NOT runaway growth.
+**Do NOT escalate recently-flattened databases** — escalation itself generates
+commits (wisp creation + multi-dog delivery acks = 10-15 commits/cycle) which
+creates a feedback loop.
+
 ```bash
-gt escalate "Dolt compaction recommended" \
-  -s MEDIUM \
-  --reason "Commit growth analysis:
+# Only escalate if the database is NOT in the recently-flattened cooldown list.
+# Post-flatten: oldest commit < 2h old → skip escalation, just log.
+if [ -n "$RECENTLY_FLATTENED_DBS" ]; then
+  echo "Skipping escalation: recently-flattened DBs in cooldown:$RECENTLY_FLATTENED_DBS"
+  echo "Post-flatten commit churn is expected — will settle within 2h."
+else
+  gt escalate "Dolt compaction recommended" \
+    -s MEDIUM \
+    --reason "Commit growth analysis:
 $REPORT
 
 Total: $TOTAL_COMMITS commits across all DBs
 Active polecats: $POLECAT_SESSIONS
 Recommendation: Run compaction on databases exceeding comfort threshold.
 See dolt-storage.md for procedure."
+fi
 ```
 
 **If everything looks comfortable, just record the result:**
