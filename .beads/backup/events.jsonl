@@ -314,3 +314,9 @@
 {"actor":"gastown/polecats/dag","comment":"Removed label: done-intent:DEFERRED:1773287929","created_at":"2026-03-11T20:58:50Z","event_type":"label_removed","id":412,"issue_id":"gt-gastown-polecat-Toast","new_value":null,"old_value":null}
 {"actor":"gastown/polecats/dag","comment":"Removed label: done-cp:witness-notified:ok:1773287930","created_at":"2026-03-11T20:58:50Z","event_type":"label_removed","id":413,"issue_id":"gt-gastown-polecat-Toast","new_value":null,"old_value":null}
 {"actor":"gastown/refinery","comment":null,"created_at":"2026-03-11T21:01:44Z","event_type":"closed","id":414,"issue_id":"gt-2vk","new_value":"Merged in gt-wisp-a4dy3","old_value":""}
+{"actor":"mayor","comment":null,"created_at":"2026-03-12T11:53:35Z","event_type":"created","id":415,"issue_id":"gt-n0z","new_value":"","old_value":""}
+{"actor":"mayor","comment":null,"created_at":"2026-03-12T11:53:35Z","event_type":"created","id":416,"issue_id":"gt-udb","new_value":"","old_value":""}
+{"actor":"mayor","comment":null,"created_at":"2026-03-12T11:53:35Z","event_type":"created","id":417,"issue_id":"gt-cwc","new_value":"","old_value":""}
+{"actor":"mayor","comment":null,"created_at":"2026-03-12T11:53:36Z","event_type":"created","id":418,"issue_id":"gt-dr0","new_value":"","old_value":""}
+{"actor":"mayor","comment":null,"created_at":"2026-03-12T11:53:36Z","event_type":"created","id":419,"issue_id":"gt-9zf","new_value":"","old_value":""}
+{"actor":"mayor","comment":null,"created_at":"2026-03-12T11:53:36Z","event_type":"created","id":420,"issue_id":"gt-ayg","new_value":"","old_value":""}
