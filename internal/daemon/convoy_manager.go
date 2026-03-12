@@ -370,9 +370,18 @@ func (m *ConvoyManager) scan() {
 			}
 			m.closeEmptyConvoy(c.ID)
 		} else {
-			// Tracked issues exist but none are ready. This requires agent
-			// judgment (the deacon decides what to do). Log for visibility.
-			m.logger("Convoy %s: %d tracked issues, 0 ready — needs agent review", c.ID, c.TrackedCount)
+			// Tracked issues exist but none are ready. Try GC'ing legs with
+			// idle/done assignee polecats before escalating to agent review.
+			gcCount := m.gcIdleAssigneLegs(c.ID)
+			if gcCount > 0 {
+				m.logger("Convoy %s: GC'd %d idle-assignee leg(s), re-evaluating", c.ID, gcCount)
+				// Don't re-evaluate immediately — the close events will trigger
+				// convoy checks via event polling within 5s.
+			} else {
+				// No idle-assignee legs to GC. This is a real blockage that
+				// requires agent judgment (the deacon decides what to do).
+				m.logger("Convoy %s: %d tracked issues, 0 ready — needs agent review", c.ID, c.TrackedCount)
+			}
 		}
 	}
 }
@@ -463,6 +472,31 @@ func (m *ConvoyManager) closeEmptyConvoy(convoyID string) {
 	if err := cmd.Run(); err != nil {
 		m.logger("Convoy %s: check failed: %s", convoyID, util.FirstLine(stderr.String()))
 	}
+}
+
+// gcIdleAssigneLegs runs `gt convoy gc <convoy-id> --json` to close legs
+// with idle/done assignee polecats. Returns the count of legs closed.
+func (m *ConvoyManager) gcIdleAssigneLegs(convoyID string) int {
+	cmd := exec.CommandContext(m.ctx, m.gtPath, "convoy", "gc", convoyID, "--json")
+	cmd.Dir = m.townRoot
+	util.SetProcessGroup(cmd)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		m.logger("Convoy %s: gc failed: %s", convoyID, util.FirstLine(stderr.String()))
+		return 0
+	}
+
+	var result struct {
+		LegsClosed int `json:"legs_closed"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		return 0
+	}
+
+	return result.LegsClosed
 }
 
 // runStartupSweep runs one convoy check pass after a brief delay to catch
