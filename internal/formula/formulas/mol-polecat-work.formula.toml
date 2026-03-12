@@ -656,6 +656,31 @@ You should see output like:
 ✓ Session exiting
 ```
 
+**Before exiting — nominate knowledge (optional):**
+
+If you discovered something worth sharing during this work — a pattern that
+worked, a solution to a tricky problem, a hard-won lesson — nominate it to
+rally_tavern before calling `gt done`. This takes 30 seconds and helps every
+future agent working on similar problems.
+
+```bash
+gt rally nominate \
+  --category practice \        # or: solution, learned
+  --title "Short descriptive title" \
+  --summary "One sentence: what it is and why it matters" \
+  --tags relevant,tags,here \
+  --issue {{issue}}
+```
+
+Ask yourself:
+- Did I solve something that took longer than expected?
+- Did I find a footgun that isn't documented anywhere?
+- Did I discover a pattern that works well for this tech stack?
+
+If yes to any of these — nominate. franklin (rally_tavern's knowledge curator)
+evaluates quality, so err on the side of nominating. Non-blocking: degrades
+gracefully if rally_tavern is absent.
+
 **You are GONE after this.** The refinery has already merged your work.
 `gt done` at this point is just cleanup (nuke sandbox, close session).
 

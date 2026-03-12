@@ -291,14 +291,22 @@ internal/formula/formulas/mol-polecat-work.formula.toml  # Add knowledge lookup 
 
 ---
 
-## Out of Scope (Phase 2+)
+## Phase 2 — AFTER Pipeline (Complete, 2026-03-12)
 
-These are explicitly NOT part of Phase 1:
+The knowledge contribution loop: agents nominate what they learn, franklin reviews it.
 
-- **AFTER trigger** (Q4): Agent self-nomination during `gt done` for knowledge contribution
-- **Approval routing** (Q5): Two-stage nomination flow (rig Mayor → rally_tavern Mayor)
+| # | Feature | Status |
+|---|---------|--------|
+| 06 | `gt rally nominate` command | ✅ done |
+| 07 | `Nomination` struct + wire format (`RALLY_NOMINATION_V1`) | ✅ done |
+| 08 | franklin — knowledge curator agent in rally_tavern | ✅ done |
+| 09 | Nomination prompt in `mol-polecat-work` self-clean step | ✅ done |
+
+**Test case:** tmux mouse support tip nominated and delivered to `rally_tavern/franklin` inbox.
+
+## Out of Scope (Phase 3+)
+
 - **Artifact search**: Searching rally_tavern artifacts (code templates, starters)
-- **Knowledge write-back**: Agents contributing new knowledge entries
 - **Fuzzy search**: Full-text search, embeddings, or semantic matching
 - **Knowledge caching**: Persistent index across sessions
 - **MCP server integration**: rally_tavern MCP server for richer tool integration
