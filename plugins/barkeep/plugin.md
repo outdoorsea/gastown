@@ -20,13 +20,17 @@ every future agent via `gt rally search`.
 
 ## Patrol Cycle
 
-On each patrol, check your inbox for new nominations:
+On each patrol, check your inbox for new messages:
 
 ```bash
 gt mail inbox
 ```
 
-Look for messages with subject prefix `RALLY_NOMINATION:`. For each:
+Look for two message types: `RALLY_NOMINATION:` and `RALLY_REPORT:`.
+
+### Processing RALLY_NOMINATION messages
+
+For each message with subject prefix `RALLY_NOMINATION:`:
 
 ### 1. Read the nomination
 
@@ -128,15 +132,52 @@ gt mail send <nominated_by> \
   -m "Not accepted: <brief reason>. <Optional: what would make it acceptable>"
 ```
 
-Then archive the nomination mail (mark read / close).
+Then archive the nomination mail.
 
-### 5. After processing all nominations
+### 5. After processing nominations
 
 Spot-check that the new entry is searchable:
 
 ```bash
 gt rally lookup <first-tag-from-new-entry>
 ```
+
+---
+
+### Processing RALLY_REPORT messages
+
+Agents send these via `gt rally report` or `gt rally verify` to flag entries
+as stale, wrong, improvable, or to confirm they're still accurate.
+
+Subject prefix: `RALLY_REPORT:`
+
+The body starts with `RALLY_REPORT_V1\n---\n` followed by YAML. Key fields:
+- `entry_id` or `entry_tag`: which entry is being reported
+- `kind`: stale | wrong | improve | verify
+- `reason`: why it's stale or wrong (stale/wrong only)
+- `improvement`: suggested text change (improve only)
+- `reported_by`: which agent sent it
+
+**Acting on each kind:**
+
+**verify** — The agent used this entry and it still works. Update `last_verified`:
+```yaml
+last_verified: <reported_at from report>
+```
+Commit: `git commit -m "Verify: <entry_id> (confirmed by <reported_by>)"`
+
+**stale** or **wrong** — Review the reason. Options:
+- Mark `deprecated: true` if clearly outdated, optionally add `superseded_by: <id>`
+- Edit the entry to correct it if the fix is clear
+- Commit with explanation of the change
+
+**improve** — Apply if it adds genuine value. Edit the relevant fields
+(summary, details, solution, lesson), commit with what changed.
+
+Reply to the reporter for stale/wrong/improve so they know it was acted on.
+For verify, a reply is optional.
+
+Archive all RALLY_REPORT messages after processing.
 
 ## Quality Bar Examples
 

@@ -5,6 +5,8 @@ The Barkeep tends the rally_tavern knowledge base. Your job each patrol cycle:
 - Process incoming RALLY_NOMINATION messages from agents across all rigs
 - Accept worthy nominations and write them to the knowledge directory
 - Reject low-quality nominations with brief feedback
+- Process RALLY_REPORT messages (stale, wrong, improve, verify signals from agents)
+- Run periodic knowledge hygiene to flag potentially stale entries
 - Keep the inbox clear so nothing sits unreviewed
 
 **You do NOT do implementation work.** You curate knowledge.
@@ -182,6 +184,68 @@ gt mail send <nominated_by> \
 gt mail archive <msg-id>
 ```
 
+### For each RALLY_REPORT message
+
+**1. Read it:**
+```bash
+gt mail read <msg-id>
+```
+
+The body starts with `RALLY_REPORT_V1\n---\n` followed by YAML. Key fields:
+- `entry_id` or `entry_tag`: which entry is being reported
+- `kind`: stale | wrong | improve | verify
+- `reason`: why it's stale or wrong (required for stale/wrong)
+- `improvement`: suggested improvement text (required for improve)
+- `reported_by`: which agent sent it
+- `report_id`: unique ID like `rpt-a3f9c2`
+
+**2. Find the entry:**
+```bash
+gt rally search "<entry_id or tag keywords>"
+# or if by tag:
+gt rally lookup <entry_tag>
+```
+
+Then locate the file:
+```bash
+find ~/gt/rally_tavern/mayor/rig/knowledge/ -name "*.yaml" | xargs grep -l "^id: <entry_id>"
+```
+
+**3. Act on the report kind:**
+
+**verify** — update `last_verified` in the YAML:
+```yaml
+last_verified: <reported_at from report>
+```
+```bash
+cd ~/gt/rally_tavern
+git add mayor/rig/knowledge/
+git commit -m "Verify: <entry_id> (confirmed by <reported_by>)"
+git push
+```
+
+**stale** or **wrong** — review the reason field and decide:
+- If clearly outdated/incorrect: set `deprecated: true` and optionally `superseded_by: <new-entry-id>` (if a replacement exists)
+- If fixable: edit the entry to correct it, update `last_verified`
+- Commit the change with `git commit -m "Update: <entry_id> — <brief reason>"`
+
+**improve** — apply the suggested improvement if it adds value:
+- Edit the `summary`, `details`, `lesson`, or `solution` fields as appropriate
+- Commit with `git commit -m "Improve: <entry_id> — <what changed>"`
+- If the suggestion doesn't add value, archive without changes
+
+**4. Reply to reporter (for verify/improve, optional; for stale/wrong, recommended):**
+```bash
+gt mail send <reported_by> \
+  -s "Re: RALLY_REPORT: <entry_id> [<kind>]" \
+  -m "<brief: 'Marked deprecated' / 'Updated: what changed' / 'Verified: thanks'>"
+```
+
+**5. Archive the report:**
+```bash
+gt mail archive <msg-id>
+```
+
 ### Other message types
 
 **HANDOFF**: Read predecessor context, absorb, archive.
@@ -191,11 +255,11 @@ unexpected to mayor/ via mail.
 
 ### Batch processing
 
-If inbox has > 10 nominations, process in batches of 5. Avoid filling context
+If inbox has > 10 messages, process in batches of 5. Avoid filling context
 on a long queue — better to do 5 well than 15 poorly.
 
-**Exit criteria:** All RALLY_NOMINATION messages processed. Inbox clear or
-non-nomination messages noted.
+**Exit criteria:** All RALLY_NOMINATION and RALLY_REPORT messages processed.
+Inbox clear or non-nomination messages noted.
 """
 
 [[steps]]
@@ -211,11 +275,26 @@ ls ~/gt/rally_tavern/mayor/rig/knowledge/solutions/ | wc -l
 ls ~/gt/rally_tavern/mayor/rig/knowledge/learned/ | wc -l
 ```
 
-If counts look healthy (> 5 entries total), move on.
+If counts look healthy (> 5 entries total), move on. If sparse, note it.
 
-If the knowledge base looks sparse (< 5 entries total), note it for the
-patrol summary — this signals that nominations aren't flowing or agents
-aren't nominating.
+### Staleness scan (run once per 10 patrol cycles — not every cycle)
+
+To avoid unnecessary churn, run this scan only occasionally. Check if the
+current patrol number (from your patrol count) is divisible by 10. If so:
+
+Find entries with no `last_verified` field that are older than 90 days:
+```bash
+grep -rL "last_verified" ~/gt/rally_tavern/mayor/rig/knowledge/ | \
+  xargs grep -l "created_at:" | head -10
+```
+
+For each flagged entry, check the `created_at` date. If older than 90 days
+and no `last_verified`, add a comment noting it may need verification — or
+leave it for agents to verify organically via `gt rally verify`.
+
+**Do NOT bulk-deprecate entries.** Only mark `deprecated: true` if you have
+a specific reason from a RALLY_REPORT, or if the entry references technology
+known to be replaced.
 
 Do NOT manufacture knowledge entries. Only write entries from real nominations.
 """
@@ -248,8 +327,9 @@ description = """
 Close the current patrol and start the next cycle.
 
 Generate a brief summary of what was processed:
-- N nominations accepted, N rejected, N skipped (not RALLY_NOMINATION)
-- Any notable patterns in nominations
+- N nominations accepted, N rejected
+- N reports processed (stale/wrong/improve/verify)
+- Any notable patterns or observations
 
 Build a step audit listing all steps with OK or SKIP status.
 
