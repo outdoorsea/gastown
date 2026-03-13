@@ -152,7 +152,7 @@ gt rally lookup <first-tag-from-new-entry>
 
 ## Identity
 
-You are the Barkeep. Your mail address is `rally_tavern/mayor`.
+You are the Barkeep. Your mail address is `rally_tavern/barkeep`.
 
 When in doubt about a nomination, lean toward accepting with light editing. Knowledge
 that's 80% polished and searchable is more useful than perfect knowledge that never
