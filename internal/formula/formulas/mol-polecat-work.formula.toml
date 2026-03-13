@@ -70,7 +70,7 @@ spawning → working → mr_submitted → awaiting_verdict
 | Unsure what to do | Mail Witness, don't guess |
 | Max fix attempts exceeded | Mail Witness, enter stuck state |"""
 formula = "mol-polecat-work"
-version = 9
+version = 10
 
 [[steps]]
 id = "load-context"
@@ -397,14 +397,36 @@ ALWAYS commit ALL uncommitted changes from your implementation.
 git status
 ```
 
-**2. If there are ANY uncommitted changes, commit them now:**
+**2. Resolve any dirty state — the MM (staged+unstaged) pattern:**
+
+If `git status` shows files with BOTH staged and unstaged changes (the "MM" state
+in porcelain output), you have partial staging. This happens when you edited a file,
+staged it, then edited it again. Resolution:
+
+```bash
+# See exactly what's staged vs unstaged:
+git status --porcelain
+# MM = modified in index AND working tree (partial stage)
+# M_ = modified in index only (fully staged)
+# _M = modified in working tree only (unstaged)
+# A_ = added to index (new file, staged)
+# ?? = untracked
+
+# To commit ALL current content of partially-staged files:
+git add -A && git commit -m "<type>: <descriptive message> ({{issue}})"
+```
+
+Do NOT use `git add -p` or selective staging at this point — commit everything.
+The goal is a clean working tree, not a curated index.
+
+**3. If there are ANY uncommitted changes, commit them now:**
 ```bash
 git add -A && git commit -m "<type>: <descriptive message> ({{issue}})"
 ```
 
-**3. If working tree is already clean, that's fine — but you MUST still have commits (step 4).**
+**4. If working tree is already clean, that's fine — but you MUST still have commits (step 5).**
 
-**4. VERIFY commits exist (HARD GATE — do NOT close this step without passing):**
+**5. VERIFY commits exist (HARD GATE — do NOT close this step without passing):**
 ```bash
 git log origin/{{base_branch}}..HEAD --oneline
 ```
@@ -416,11 +438,23 @@ This MUST show at least 1 commit. If it shows NOTHING:
   run `gt done --status DEFERRED` and skip remaining steps.
 - Do NOT proceed to cleanup or submit with zero commits.
 
-**5. VERIFY clean working tree:**
+**6. VERIFY clean working tree (HARD GATE — porcelain check):**
 ```bash
-git status
+git status --porcelain
 ```
-Must show "nothing to commit, working tree clean".
+
+This command MUST produce NO output (empty). If it produces ANY output, your
+working tree is dirty. Do NOT close this step until `git status --porcelain`
+returns empty.
+
+Common dirty states and resolution:
+| Porcelain | Meaning | Fix |
+|-----------|---------|-----|
+| `MM file` | Staged + unstaged changes | `git add file && git commit --amend --no-edit` |
+| ` M file` | Unstaged modification | `git add file && git commit -m "fix: ..."` |
+| `?? file` | Untracked file | `git add file && git commit -m "chore: add ..."` or add to .gitignore |
+| `A  file` | Staged but uncommitted | `git commit -m "feat: add ..."` |
+| ` D file` | Deleted but not staged | `git rm file && git commit -m "chore: remove ..."` |
 
 **Report-only tasks (audits, reviews, research — no code changes):**
 If your task produced no code changes, verify your findings are persisted to the bead:
@@ -430,7 +464,7 @@ bd show {{issue}}    # Check notes/design fields have your findings
 If findings are persisted, proceed to cleanup. `gt done --cleanup-status clean`
 handles the no-commit case for report-only tasks.
 
-**Exit criteria:** Working tree clean AND either (a) at least 1 commit ahead of origin/{{base_branch}}, or (b) report-only task with findings persisted to bead."""
+**Exit criteria:** `git status --porcelain` returns empty (HARD GATE) AND either (a) at least 1 commit ahead of origin/{{base_branch}}, or (b) report-only task with findings persisted to bead."""
 
 [[steps]]
 id = "pre-verify"
@@ -501,9 +535,10 @@ Submit your MR to the merge queue but stay alive for the verdict.
 
 **Pre-flight: Verify you have actual work to submit (HARD GATE):**
 ```bash
-git log origin/{{base_branch}}..HEAD --oneline
+git status --porcelain           # MUST be empty (clean tree)
+git log origin/{{base_branch}}..HEAD --oneline  # MUST show at least 1 commit
 ```
-This MUST show at least 1 commit. If it shows nothing, do NOT submit.
+If working tree is dirty, go back to commit-changes. If no commits, do NOT submit.
 
 **Report-only tasks (no commits — audits, reviews, research):**
 If this is a report-only task with findings persisted to the bead,
@@ -664,12 +699,8 @@ rally_tavern before calling `gt done`. This takes 30 seconds and helps every
 future agent working on similar problems.
 
 ```bash
-gt rally nominate \
-  --category practice \        # or: solution, learned
-  --title "Short descriptive title" \
-  --summary "One sentence: what it is and why it matters" \
-  --tags relevant,tags,here \
-  --issue {{issue}}
+gt rally nominate --category practice --title "Short descriptive title" --summary "One sentence: what it is and why it matters" --tags relevant,tags,here --issue {{issue}}
+# --category options: practice, solution, learned
 ```
 
 Ask yourself:
