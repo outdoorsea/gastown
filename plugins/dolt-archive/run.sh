@@ -16,7 +16,7 @@ DOLT_USER="${DOLT_USER:-root}"
 DOLT_DATA_DIR="${DOLT_DATA_DIR:-$HOME/gt/.dolt-data}"
 JSONL_EXPORT_DIR="$HOME/gt/.dolt-archive/jsonl"
 BACKUP_REPO="$HOME/gt/.dolt-archive/git"
-DEFAULT_DBS="hq,bd,gastown"
+DEFAULT_DBS="beads_hq,beads,beads_gt,beads_mm,gt,lc,lilypad_chat,myndy_api,myndy_ios,rally_tavern,theoutlived,tr,vitalitek,wandering_river,wr"
 SKIP_GIT=false
 SKIP_DOLT_PUSH=false
 
@@ -73,20 +73,36 @@ EXPORTED=0
 EXPORT_FAILED=0
 EXPORT_ERRORS=""
 
+# Build a map from dolt_database name → beads directory by scanning metadata.json files.
+# bd export must be run from the directory containing .beads/metadata.json.
+declare -A DB_BEADS_DIR
+for META in "$HOME/gt/.beads/metadata.json" "$HOME/gt"/*/mayor/rig/.beads/metadata.json; do
+  [[ -f "$META" ]] || continue
+  DB_NAME=$(python3 -c "import json; print(json.load(open('$META')).get('dolt_database',''))" 2>/dev/null)
+  [[ -n "$DB_NAME" ]] && DB_BEADS_DIR["$DB_NAME"]="$(dirname "$(dirname "$META")")"
+done
+
 for DB in "${PROD_DBS[@]}"; do
   EXPORT_FILE="$JSONL_EXPORT_DIR/${DB}-$(date +%Y%m%d-%H%M).jsonl"
   LATEST_LINK="$JSONL_EXPORT_DIR/${DB}-latest.jsonl"
 
   log "Exporting $DB..."
 
-  # Try bd export first (native beads export)
-  if bd export --db "$DB" --format jsonl > "$EXPORT_FILE" 2>/dev/null; then
-    LINE_COUNT=$(wc -l < "$EXPORT_FILE" | tr -d ' ')
-    FILE_SIZE=$(du -h "$EXPORT_FILE" | cut -f1)
-    log "  $DB: $LINE_COUNT issues exported ($FILE_SIZE) [bd export]"
-    ln -sf "$(basename "$EXPORT_FILE")" "$LATEST_LINK"
-    EXPORTED=$((EXPORTED + 1))
-  else
+  # Try bd export from the rig's beads directory (required for correct db resolution)
+  BD_EXPORTED=false
+  if [[ -n "${DB_BEADS_DIR[$DB]:-}" ]]; then
+    BEADS_DIR="${DB_BEADS_DIR[$DB]}"
+    if (cd "$BEADS_DIR" && bd export -o "$EXPORT_FILE") 2>/dev/null; then
+      LINE_COUNT=$(wc -l < "$EXPORT_FILE" | tr -d ' ')
+      FILE_SIZE=$(du -h "$EXPORT_FILE" | cut -f1)
+      log "  $DB: $LINE_COUNT issues exported ($FILE_SIZE) [bd export from $BEADS_DIR]"
+      ln -sf "$(basename "$EXPORT_FILE")" "$LATEST_LINK"
+      EXPORTED=$((EXPORTED + 1))
+      BD_EXPORTED=true
+    fi
+  fi
+
+  if ! $BD_EXPORTED; then
     # Fallback: query Dolt directly for issues table
     if dolt_query_json "$DB" "SELECT * FROM issues ORDER BY id" > "$EXPORT_FILE" 2>/dev/null && [[ -s "$EXPORT_FILE" ]]; then
       LINE_COUNT=$(wc -l < "$EXPORT_FILE" | tr -d ' ')
