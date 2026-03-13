@@ -44,50 +44,51 @@ DOLT_USER="root"
 Export all issues from each production database to JSONL files. These are
 human-readable, diffable, and survive any storage backend failure.
 
+bd export must be run from a directory containing a .beads/metadata.json that
+points to the target Dolt database — passing --db with a bare db name does not
+work. We discover rig dirs dynamically rather than maintaining a hard-coded list.
+
 ```bash
 echo "=== JSONL Export ==="
 EXPORTED=0
 EXPORT_FAILED=0
+EXPORT_DBS=()   # DB names exported (for prune step below)
 
 mkdir -p "$JSONL_EXPORT_DIR"
 
-for DB in "${PROD_DBS[@]}"; do
+# Discover all beads directories: town root + each rig's mayor/rig/
+BEADS_DIRS=()
+[ -f "$HOME/gt/.beads/metadata.json" ] && BEADS_DIRS+=("$HOME/gt")
+for META in "$HOME/gt"/*/mayor/rig/.beads/metadata.json; do
+  [ -f "$META" ] && BEADS_DIRS+=("$(dirname "$(dirname "$META")")")
+done
+
+for BEADS_DIR in "${BEADS_DIRS[@]}"; do
+  META="$BEADS_DIR/.beads/metadata.json"
+  DB=$(python3 -c "import json; print(json.load(open('$META')).get('dolt_database',''))" 2>/dev/null)
+  [ -z "$DB" ] && continue
+
   EXPORT_FILE="$JSONL_EXPORT_DIR/${DB}-$(date +%Y%m%d-%H%M).jsonl"
   LATEST_LINK="$JSONL_EXPORT_DIR/${DB}-latest.jsonl"
 
-  echo "Exporting $DB..."
+  echo "Exporting $DB (from $BEADS_DIR)..."
 
-  # Use bd export if available, otherwise query directly
-  if bd export --db "$DB" --format jsonl > "$EXPORT_FILE" 2>/dev/null; then
+  if (cd "$BEADS_DIR" && bd export -o "$EXPORT_FILE") 2>/dev/null; then
     LINE_COUNT=$(wc -l < "$EXPORT_FILE" | tr -d ' ')
     FILE_SIZE=$(du -h "$EXPORT_FILE" | cut -f1)
     echo "  $DB: $LINE_COUNT issues exported ($FILE_SIZE)"
-
-    # Update latest symlink
     ln -sf "$EXPORT_FILE" "$LATEST_LINK"
     EXPORTED=$((EXPORTED + 1))
+    EXPORT_DBS+=("$DB")
   else
-    # Fallback: query Dolt directly for issue data
-    dolt sql -q "SELECT * FROM issues ORDER BY id" \
-      --host "$DOLT_HOST" --port "$DOLT_PORT" -u "$DOLT_USER" \
-      -d "$DB" --no-auto-commit --result-format json \
-      > "$EXPORT_FILE" 2>/dev/null
-
-    if [ $? -eq 0 ] && [ -s "$EXPORT_FILE" ]; then
-      LINE_COUNT=$(wc -l < "$EXPORT_FILE" | tr -d ' ')
-      echo "  $DB: exported via SQL ($LINE_COUNT lines)"
-      ln -sf "$EXPORT_FILE" "$LATEST_LINK"
-      EXPORTED=$((EXPORTED + 1))
-    else
-      echo "  WARN: $DB export failed"
-      rm -f "$EXPORT_FILE"
-      EXPORT_FAILED=$((EXPORT_FAILED + 1))
-    fi
+    echo "  WARN: $DB export failed"
+    rm -f "$EXPORT_FILE"
+    EXPORT_FAILED=$((EXPORT_FAILED + 1))
   fi
 done
 
 # Prune old exports (keep last 24 snapshots per DB)
-for DB in "${PROD_DBS[@]}"; do
+for DB in "${EXPORT_DBS[@]}"; do
   SNAPSHOTS=$(ls -t "$JSONL_EXPORT_DIR/${DB}-2"*.jsonl 2>/dev/null | tail -n +25)
   if [ -n "$SNAPSHOTS" ]; then
     echo "$SNAPSHOTS" | xargs rm -f
