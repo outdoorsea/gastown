@@ -77,3 +77,14 @@ result
 
 # Gas Town (added by gt)
 __pycache__/
+
+# Gas Town operational files (managed by submodule-gitignore plugin)
+config.json
+crew/
+polecats/
+refinery/
+witness/
+mayor/
+archive/
+.repo.git/
+.land-worktree/
