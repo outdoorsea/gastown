@@ -1036,6 +1036,11 @@ notifyWitness:
 		}
 
 		fmt.Printf("%s Polecat transitioned to IDLE — ready for new work\n", style.Bold.Render("✓"))
+
+		// Rally Tavern nomination tip (non-blocking, COMPLETED only)
+		if exitType == ExitCompleted {
+			fmt.Printf("\n  %s %s\n", style.Dim.Render("Tip:"), style.Dim.Render("gt rally nominate --category <practice|solution|learned> if you learned something worth sharing"))
+		}
 	}
 
 	fmt.Println()
