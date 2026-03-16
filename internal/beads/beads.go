@@ -298,14 +298,6 @@ type UpdateOptions struct {
 	SetLabels    []string // Labels to set (replaces all existing)
 }
 
-// SyncStatus represents the sync status of the beads repository.
-type SyncStatus struct {
-	Branch    string
-	Ahead     int
-	Behind    int
-	Conflicts []string
-}
-
 // Beads wraps bd CLI operations for a working directory.
 type Beads struct {
 	workDir    string
@@ -661,9 +653,7 @@ func (b *Beads) List(opts ListOptions) ([]*Issue, error) {
 		return b.listEphemeral(opts)
 	}
 
-	// --flat is required because bd's default tree mode doesn't output valid JSON
-	// even when --json is specified. This was introduced when bd added tree view.
-	args := []string{"list", "--json", "--flat"}
+	args := []string{"list", "--json"}
 
 	if opts.Status != "" {
 		args = append(args, "--status="+opts.Status)
@@ -1040,6 +1030,36 @@ func (b *Beads) Show(id string) (*Issue, error) {
 	}
 
 	return issues[0], nil
+}
+
+// FindLatestIssueByTitleAndAssignee finds the newest issue matching the given title and assignee.
+func (b *Beads) FindLatestIssueByTitleAndAssignee(title, assignee string) (*Issue, error) {
+	out, err := b.run("list", "--json", "--limit", "0", "--title", title, "--assignee", assignee)
+	if err != nil {
+		return nil, fmt.Errorf("bd list: %w", err)
+	}
+
+	var issues []*Issue
+	if err := json.Unmarshal(out, &issues); err != nil {
+		return nil, fmt.Errorf("parsing bd list output: %w", err)
+	}
+	if len(issues) == 0 {
+		return nil, ErrNotFound
+	}
+
+	var newest *Issue
+	for _, issue := range issues {
+		if issue.Title != title || issue.Assignee != assignee {
+			continue
+		}
+		if newest == nil || issue.CreatedAt > newest.CreatedAt {
+			newest = issue
+		}
+	}
+	if newest == nil {
+		return nil, ErrNotFound
+	}
+	return newest, nil
 }
 
 // ShowMultiple fetches multiple issues by ID in a single bd call.
@@ -1434,37 +1454,6 @@ func (b *Beads) AddDependency(issue, dependsOn string) error {
 func (b *Beads) RemoveDependency(issue, dependsOn string) error {
 	_, err := b.run("dep", "remove", issue, dependsOn)
 	return err
-}
-
-// Sync syncs beads with remote.
-func (b *Beads) Sync() error {
-	_, err := b.run("sync")
-	return err
-}
-
-// SyncFromMain syncs beads updates from main branch.
-func (b *Beads) SyncFromMain() error {
-	_, err := b.run("sync", "--from-main")
-	return err
-}
-
-// GetSyncStatus returns the sync status without performing a sync.
-func (b *Beads) GetSyncStatus() (*SyncStatus, error) {
-	out, err := b.run("sync", "--status", "--json")
-	if err != nil {
-		// If sync branch doesn't exist, return empty status
-		if strings.Contains(err.Error(), "does not exist") {
-			return &SyncStatus{}, nil
-		}
-		return nil, err
-	}
-
-	var status SyncStatus
-	if err := json.Unmarshal(out, &status); err != nil {
-		return nil, fmt.Errorf("parsing bd sync status output: %w", err)
-	}
-
-	return &status, nil
 }
 
 // Stats returns repository statistics.

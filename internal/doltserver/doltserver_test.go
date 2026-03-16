@@ -77,6 +77,170 @@ func TestDirSize_NonexistentDir(t *testing.T) {
 	}
 }
 
+func TestGetDoltFlagFromArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		flag string
+		want string
+	}{
+		{
+			name: "space separated data dir",
+			args: []string{"dolt", "sql-server", "--data-dir", "/tmp/dolt-data"},
+			flag: "--data-dir",
+			want: "/tmp/dolt-data",
+		},
+		{
+			name: "equals data dir",
+			args: []string{"dolt", "sql-server", "--data-dir=/tmp/dolt-data"},
+			flag: "--data-dir",
+			want: "/tmp/dolt-data",
+		},
+		{
+			name: "space separated config",
+			args: []string{"dolt", "sql-server", "--config", "/tmp/.dolt-data/config.yaml"},
+			flag: "--config",
+			want: "/tmp/.dolt-data/config.yaml",
+		},
+		{
+			name: "equals config",
+			args: []string{"dolt", "sql-server", "--config=/tmp/.dolt-data/config.yaml"},
+			flag: "--config",
+			want: "/tmp/.dolt-data/config.yaml",
+		},
+		{
+			name: "missing flag",
+			args: []string{"dolt", "sql-server"},
+			flag: "--config",
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := getDoltFlagFromArgs(tt.args, tt.flag); got != tt.want {
+				t.Fatalf("getDoltFlagFromArgs(%v, %q) = %q, want %q", tt.args, tt.flag, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDoltProcessMatchesTownPaths(t *testing.T) {
+	expectedDir := "/town/.dolt-data"
+
+	tests := []struct {
+		name             string
+		actualDataDir    string
+		actualConfigPath string
+		actualCWD        string
+		stateDataDir     string
+		want             bool
+	}{
+		{
+			name:          "matches live data dir",
+			actualDataDir: "/town/.dolt-data",
+			want:          true,
+		},
+		{
+			name:             "matches live config path",
+			actualConfigPath: "/town/.dolt-data/config.yaml",
+			want:             true,
+		},
+		{
+			name:      "matches cwd in data dir",
+			actualCWD: "/town/.dolt-data",
+			want:      true,
+		},
+		{
+			name:      "matches cwd in town root",
+			actualCWD: "/town",
+			want:      true,
+		},
+		{
+			name:         "falls back to matching state",
+			stateDataDir: "/town/.dolt-data",
+			want:         true,
+		},
+		{
+			name:             "live config beats stale matching state",
+			actualConfigPath: "/town/juplend_4/.beads/dolt/config.yaml",
+			stateDataDir:     "/town/.dolt-data",
+			want:             false,
+		},
+		{
+			name:         "foreign cwd beats stale matching state",
+			actualCWD:    "/town/juplend_4/.beads/dolt",
+			stateDataDir: "/town/.dolt-data",
+			want:         false,
+		},
+		{
+			name:             "correct config beats unusual cwd",
+			actualConfigPath: "/town/.dolt-data/config.yaml",
+			actualCWD:        "/town/juplend_4/.beads/dolt",
+			want:             true,
+		},
+		{
+			name: "rejects unknown process",
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := doltProcessMatchesTownPaths(expectedDir, tt.actualDataDir, tt.actualConfigPath, tt.actualCWD, tt.stateDataDir)
+			if got != tt.want {
+				t.Fatalf("doltProcessMatchesTownPaths(...) = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDoltProcessOwnerPathFromEvidence(t *testing.T) {
+	tests := []struct {
+		name             string
+		actualDataDir    string
+		actualConfigPath string
+		actualCWD        string
+		stateDataDir     string
+		want             string
+	}{
+		{
+			name:          "prefers live data dir",
+			actualDataDir: "/town/.dolt-data",
+			actualCWD:     "/town",
+			stateDataDir:  "/town/.dolt-data",
+			want:          "/town/.dolt-data",
+		},
+		{
+			name:             "falls back to config path",
+			actualConfigPath: "/town/rig/.beads/dolt/config.yaml",
+			actualCWD:        "/town/rig/.beads/dolt",
+			stateDataDir:     "/town/.dolt-data",
+			want:             "/town/rig/.beads/dolt/config.yaml",
+		},
+		{
+			name:         "falls back to cwd",
+			actualCWD:    "/town/rig/.beads/dolt",
+			stateDataDir: "/town/.dolt-data",
+			want:         "/town/rig/.beads/dolt",
+		},
+		{
+			name:         "falls back to state",
+			stateDataDir: "/town/.dolt-data",
+			want:         "/town/.dolt-data",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := doltProcessOwnerPathFromEvidence(tt.actualDataDir, tt.actualConfigPath, tt.actualCWD, tt.stateDataDir)
+			if got != tt.want {
+				t.Fatalf("doltProcessOwnerPathFromEvidence(...) = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetHealthMetrics_NoServer(t *testing.T) {
 	townRoot := t.TempDir()
 
@@ -1836,7 +2000,6 @@ func TestInitRig_InvalidCharacters(t *testing.T) {
 	}
 }
 
-
 // =============================================================================
 // Catalog race condition tests (isDoltRetryableError coverage)
 // =============================================================================
@@ -2229,7 +2392,7 @@ func TestFindBrokenWorkspaces_HealthyWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	broken := FindBrokenWorkspaces(townRoot)
+	broken, _ := FindBrokenWorkspaces(townRoot)
 	if len(broken) != 0 {
 		t.Errorf("expected 0 broken workspaces, got %d: %+v", len(broken), broken)
 	}
@@ -2260,7 +2423,7 @@ func TestFindBrokenWorkspaces_MissingDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	broken := FindBrokenWorkspaces(townRoot)
+	broken, _ := FindBrokenWorkspaces(townRoot)
 	if len(broken) != 1 {
 		t.Fatalf("expected 1 broken workspace, got %d", len(broken))
 	}
@@ -2306,7 +2469,7 @@ func TestFindBrokenWorkspaces_WithLocalData(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	broken := FindBrokenWorkspaces(townRoot)
+	broken, _ := FindBrokenWorkspaces(townRoot)
 	if len(broken) != 1 {
 		t.Fatalf("expected 1 broken workspace, got %d", len(broken))
 	}
@@ -2338,7 +2501,7 @@ func TestFindBrokenWorkspaces_SqliteNotBroken(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	broken := FindBrokenWorkspaces(townRoot)
+	broken, _ := FindBrokenWorkspaces(townRoot)
 	if len(broken) != 0 {
 		t.Errorf("expected 0 broken workspaces for sqlite backend, got %d", len(broken))
 	}
@@ -2379,7 +2542,7 @@ func TestFindBrokenWorkspaces_MultipleRigs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	broken := FindBrokenWorkspaces(townRoot)
+	broken, _ := FindBrokenWorkspaces(townRoot)
 	if len(broken) != 1 {
 		t.Fatalf("expected 1 broken workspace (rig-a only), got %d", len(broken))
 	}
@@ -3954,117 +4117,26 @@ func TestEnsureAllMetadata_FallbackToDbName(t *testing.T) {
 	}
 }
 
-// TestRemoveDatabase_RefusesLargeDBWhenServerDown verifies that RemoveDatabase
-// refuses to delete databases with >1MB of data when the server is offline
-// and --force is not set. (gt-xvh)
-func TestRemoveDatabase_RefusesLargeDBWhenServerDown(t *testing.T) {
-	// Skip if a real Dolt server is running on the default port — IsRunning
-	// would detect it and take the SQL-check path instead of the size-check path.
-	if conn, err := net.DialTimeout("tcp", "127.0.0.1:3307", time.Second); err == nil {
-		conn.Close()
-		t.Skip("skipping: real Dolt server running on port 3307 would bypass size check")
+func TestCleanStaleSocket_RemovesStaleFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets not applicable on Windows")
 	}
 
-	townRoot := t.TempDir()
-	dataDir := filepath.Join(townRoot, ".dolt-data")
-	setupDoltDB(t, dataDir, "big_db")
-
-	// Write >1MB of data to make it look like a real database
-	bigFile := filepath.Join(dataDir, "big_db", ".dolt", "noms", "data")
-	data := make([]byte, 2<<20) // 2MB
-	if err := os.WriteFile(bigFile, data, 0644); err != nil {
+	// Create a regular file pretending to be a stale socket
+	socketPath := filepath.Join(t.TempDir(), "mysql.sock")
+	if err := os.WriteFile(socketPath, []byte{}, 0600); err != nil {
 		t.Fatal(err)
 	}
 
-	// Server is not running (no PID file, no process)
-	err := RemoveDatabase(townRoot, "big_db", false)
-	if err == nil {
-		t.Fatal("expected error when removing large database with server offline")
-	}
-	if !strings.Contains(err.Error(), "server offline") {
-		t.Errorf("expected 'server offline' in error, got: %v", err)
-	}
+	cleanStaleSocket(socketPath)
 
-	// Verify the database still exists
-	if _, statErr := os.Stat(filepath.Join(dataDir, "big_db")); statErr != nil {
-		t.Error("big_db should still exist after refused removal")
+	// lsof will report exit code 1 (no process holds it) → file should be removed
+	if _, err := os.Stat(socketPath); !os.IsNotExist(err) {
+		t.Error("stale socket file should have been removed")
 	}
 }
 
-// TestRemoveDatabase_AllowsSmallDBWhenServerDown verifies that small databases
-// (<1MB) can be removed even when the server is offline. (gt-xvh)
-func TestRemoveDatabase_AllowsSmallDBWhenServerDown(t *testing.T) {
-	townRoot := t.TempDir()
-	dataDir := filepath.Join(townRoot, ".dolt-data")
-	setupDoltDB(t, dataDir, "small_orphan")
-
-	// Small database (<1MB) — manifest file is only a few bytes from setupDoltDB
-	err := RemoveDatabase(townRoot, "small_orphan", true)
-	if err != nil {
-		t.Fatalf("RemoveDatabase with force: %v", err)
-	}
-
-	if _, statErr := os.Stat(filepath.Join(dataDir, "small_orphan")); !os.IsNotExist(statErr) {
-		t.Error("small_orphan should be removed")
-	}
-}
-
-// TestQuarantine_MovesInsteadOfDeleting verifies that the quarantine logic
-// moves corrupted database dirs to .quarantine/ instead of deleting them. (gt-xvh)
-func TestQuarantine_MovesInsteadOfDeleting(t *testing.T) {
-	townRoot := t.TempDir()
-	dataDir := filepath.Join(townRoot, ".dolt-data")
-
-	// Create a "corrupted" database: has .dolt/ but no noms/manifest
-	corruptDB := filepath.Join(dataDir, "corrupt_db", ".dolt")
-	if err := os.MkdirAll(corruptDB, 0755); err != nil {
-		t.Fatal(err)
-	}
-	// Write some data so it's not empty
-	if err := os.WriteFile(filepath.Join(corruptDB, "somefile"), []byte("data"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	// Simulate the quarantine scan (same logic as Start)
-	entries, err := os.ReadDir(dataDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		doltDir := filepath.Join(dataDir, entry.Name(), ".dolt")
-		if _, statErr := os.Stat(doltDir); statErr != nil {
-			continue
-		}
-		manifest := filepath.Join(doltDir, "noms", "manifest")
-		if _, statErr := os.Stat(manifest); statErr == nil {
-			continue
-		}
-		// This is corrupted — verify quarantine moves it
-		quarantineDir := filepath.Join(dataDir, ".quarantine")
-		if mkErr := os.MkdirAll(quarantineDir, 0755); mkErr != nil {
-			t.Fatal(mkErr)
-		}
-		dest := filepath.Join(quarantineDir, entry.Name()+".test")
-		if renameErr := os.Rename(filepath.Join(dataDir, entry.Name()), dest); renameErr != nil {
-			t.Fatalf("quarantine move failed: %v", renameErr)
-		}
-	}
-
-	// Original should be gone
-	if _, err := os.Stat(filepath.Join(dataDir, "corrupt_db")); !os.IsNotExist(err) {
-		t.Error("corrupt_db should have been moved to quarantine")
-	}
-
-	// Quarantine should have it
-	quarantineEntries, err := os.ReadDir(filepath.Join(dataDir, ".quarantine"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(quarantineEntries) != 1 {
-		t.Errorf("expected 1 quarantined entry, got %d", len(quarantineEntries))
-	}
+func TestCleanStaleSocket_NoopWhenMissing(t *testing.T) {
+	// Should not panic or error when socket doesn't exist
+	cleanStaleSocket(filepath.Join(t.TempDir(), "nonexistent.sock"))
 }

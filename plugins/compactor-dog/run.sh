@@ -23,8 +23,8 @@ DOLT_HOST="${DOLT_HOST:-127.0.0.1}"
 DOLT_PORT="${DOLT_PORT:-3307}"
 DOLT_USER="${DOLT_USER:-root}"
 COMMIT_THRESHOLD="${COMMIT_THRESHOLD:-500}"
-# Default production databases — "auto" queries SHOW DATABASES and filters system DBs.
-# This avoids hardcoded names that drift out of sync with actual Dolt databases.
+# Default: auto-discover production databases via SHOW DATABASES.
+# Override with --databases db1,db2,... for an explicit list.
 DEFAULT_DBS="auto"
 DRY_RUN=false
 CHECK_ONLY=false
@@ -42,7 +42,7 @@ while [[ $# -gt 0 ]]; do
     --help|-h)
       echo "Usage: $0 [--threshold N] [--databases db1,db2,...] [--dry-run] [--check-only]"
       echo "  --threshold N        Commit count before compaction (default: 500)"
-      echo "  --databases db1,...  Comma-separated database list (default: hq,bd,gt)"
+      echo "  --databases db1,...  Comma-separated database list (default: auto-discover)"
       echo "  --dry-run            Report only, don't compact"
       echo "  --check-only         Monitor and report only (no compaction)"
       exit 0
@@ -77,13 +77,11 @@ validate_name() {
   return 0
 }
 
-# Validate that a value looks like a Dolt commit hash.
-# Dolt uses a base32-style content hash (lowercase alphanumeric), NOT hex.
-# Example: j5658jmafu1uhdu9p1k5i0u88k6vl7b0
+# Validate that a value looks like a Dolt commit hash (base32 encoding: a-v plus 0-9).
 validate_hash() {
   local hash="$1"
   local context="$2"
-  if [[ ! "$hash" =~ ^[a-z0-9]+$ ]]; then
+  if [[ ! "$hash" =~ ^[a-v0-9]+$ ]]; then
     log "ERROR: Unsafe $context hash rejected: '$hash'"
     return 1
   fi
@@ -123,7 +121,7 @@ log "Starting compaction cycle (threshold=$COMMIT_THRESHOLD, dry_run=$DRY_RUN, c
 # If databases were explicitly provided, use those. Otherwise, auto-discover
 # from the server and filter out system/test databases.
 if [[ "$DEFAULT_DBS" == "auto" ]]; then
-  ALL_DBS=$(dolt_query "" "SHOW DATABASES" | grep -v -E '^(information_schema|mysql|dolt_cluster|testdb_|beads_t|beads_pt|doctest_)$')
+  ALL_DBS=$(dolt_query "" "SHOW DATABASES" | grep -v -E '^(information_schema|mysql|dolt_cluster)$' | grep -v -E '^(testdb_|beads_t|beads_pt|doctest_)')
   if [[ -z "$ALL_DBS" ]]; then
     log "ERROR: No production databases found (is Dolt running on $DOLT_HOST:$DOLT_PORT?)"
     gt escalate "compactor-dog: no databases found" -s MEDIUM \
@@ -239,7 +237,7 @@ for entry in "${CANDIDATES[@]}"; do
   # Step 3a: Record pre-flight row counts for integrity verification.
   log "  Recording pre-flight row counts..."
   PRE_TABLES=$(dolt_query "$DB" \
-    "SELECT table_name FROM information_schema.tables WHERE table_schema = '$DB' AND table_name NOT LIKE 'dolt_%'")
+    "SELECT table_name FROM information_schema.tables WHERE table_schema = '$DB' AND table_name NOT LIKE 'dolt_%' AND table_type = 'BASE TABLE'")
 
   # Clear pre-counts file for this database.
   : > "$PRE_COUNTS_FILE"
@@ -352,15 +350,18 @@ for entry in "${CANDIDATES[@]}"; do
       log "  WARNING: Table $TABLE appeared after compaction (new table?)"
       continue
     fi
-    if [[ "$POST_COUNT" != "$PRE" ]]; then
-      log "  INTEGRITY FAILURE: $DB.$TABLE — pre=$PRE post=$POST_COUNT"
+    # Only fail on data loss (postCount < preCount).
+    # postCount > preCount is safe: concurrent writes during flatten add rows
+    # (merge base shifts, txn is preserved — see compactor_dog.go).
+    if [[ -n "$POST_COUNT" && "$POST_COUNT" -lt "$PRE" ]]; then
+      log "  INTEGRITY FAILURE: $DB.$TABLE — data loss: pre=$PRE post=$POST_COUNT"
       INTEGRITY_OK=false
     fi
   done <<< "$PRE_TABLES"
 
   # Check for missing tables (tables present before but gone after).
   POST_TABLES=$(dolt_query "$DB" \
-    "SELECT table_name FROM information_schema.tables WHERE table_schema = '$DB' AND table_name NOT LIKE 'dolt_%'")
+    "SELECT table_name FROM information_schema.tables WHERE table_schema = '$DB' AND table_name NOT LIKE 'dolt_%' AND table_type = 'BASE TABLE'")
   while IFS=$'\t' read -r TABLE _; do
     [[ -z "$TABLE" ]] && continue
     if ! printf '%s' "$POST_TABLES" | grep -qx "$TABLE"; then

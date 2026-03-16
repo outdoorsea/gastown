@@ -1069,7 +1069,7 @@ func (p *Proxy) Shutdown() {
 
 		p.stdinMux.Lock()
 		if p.agentStdin != nil {
-			p.agentStdin.Close()
+			_ = p.agentStdin.Close()
 			p.agentStdin = nil
 		}
 		p.stdinMux.Unlock()

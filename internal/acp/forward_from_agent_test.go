@@ -3,6 +3,7 @@ package acp
 import (
 	"encoding/json"
 	"os"
+	"sync"
 	"testing"
 	"time"
 )
@@ -303,7 +304,8 @@ func TestForwardFromAgent_PropulsionTriggers(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Read received messages to verify forwarding
-	msgChan := make(chan JSONRPCMessage, 10)
+	var receivedMsgs []JSONRPCMessage
+	var mu sync.Mutex
 	decoder := json.NewDecoder(stdoutReader)
 
 	// We need to read everything that was sent to stdoutWriter
@@ -314,36 +316,25 @@ func TestForwardFromAgent_PropulsionTriggers(t *testing.T) {
 		for {
 			var msg JSONRPCMessage
 			if err := decoder.Decode(&msg); err != nil {
-				close(msgChan)
 				return
 			}
-			msgChan <- msg
+			mu.Lock()
+			receivedMsgs = append(receivedMsgs, msg)
+			mu.Unlock()
 		}
 	}()
 
-	// Drain channel with a timeout to collect messages
-	var receivedMsgs []JSONRPCMessage
-	drainTimer := time.After(200 * time.Millisecond)
-drainLoop:
-	for {
-		select {
-		case msg, ok := <-msgChan:
-			if !ok {
-				break drainLoop
-			}
-			receivedMsgs = append(receivedMsgs, msg)
-		case <-drainTimer:
-			break drainLoop
-		}
-	}
+	time.Sleep(200 * time.Millisecond)
 
 	foundAfterReset := false
+	mu.Lock()
 	for _, m := range receivedMsgs {
 		if m.Method == "test/after-reset" {
 			foundAfterReset = true
 			break
 		}
 	}
+	mu.Unlock()
 	if !foundAfterReset {
 		t.Error("Message after propulsion reset was not forwarded")
 	}

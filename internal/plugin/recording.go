@@ -102,16 +102,14 @@ func (r *Recorder) RecordRun(record PluginRunRecord) (string, error) {
 		return "", fmt.Errorf("parsing bd create output: %w", err)
 	}
 
-	// Close the bead immediately — it's an audit record, not active work.
-	// Leaving it open causes notification loops as the system treats open
-	// plugin wisps as pending callbacks.
+	// Close the receipt immediately — it exists for audit/cooldown-gate queries
+	// (which use --all to include closed beads) but should not stay open.
 	closeCtx, closeCancel := context.WithTimeout(context.Background(), constants.BdCommandTimeout)
 	defer closeCancel()
-	closeCmd := exec.CommandContext(closeCtx, "bd", "close", result.ID, "-r", "plugin run complete") //nolint:gosec
+	closeCmd := exec.CommandContext(closeCtx, "bd", "close", result.ID, "--reason", "plugin run recorded") //nolint:gosec // G204: bd is a trusted internal tool
 	closeCmd.Dir = r.townRoot
 	closeCmd.Env = append(os.Environ(), "BEADS_DIR="+beads.ResolveBeadsDir(r.townRoot))
-	// Ignore close errors — the bead is recorded; failure to close is non-fatal.
-	_ = closeCmd.Run()
+	_ = closeCmd.Run() // Best-effort — reaper will catch it if this fails
 
 	return result.ID, nil
 }
