@@ -574,6 +574,84 @@ func discoverGeminiTargets(rigPath, rigName string) []Target {
 	return targets
 }
 
+// RoleLocation represents a discovered role directory in the workspace,
+// independent of any specific agent. Used by callers that need to resolve
+// agent configuration for each location (e.g., syncing non-Claude agents).
+type RoleLocation struct {
+	Dir  string // Absolute path to the role's parent directory (e.g., .../rig/crew)
+	Rig  string // Rig name, or empty for town-level roles
+	Role string // Role name: crew, polecat, witness, refinery, mayor, deacon
+}
+
+// DiscoverRoleLocations finds all role directories in a workspace.
+// Unlike DiscoverTargets (which returns Claude-specific paths), this returns
+// agent-agnostic directory locations that callers can use with any agent config.
+func DiscoverRoleLocations(townRoot string) ([]RoleLocation, error) {
+	var locations []RoleLocation
+
+	// Town-level roles
+	for _, role := range []string{"mayor", "deacon"} {
+		dir := filepath.Join(townRoot, role)
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			locations = append(locations, RoleLocation{Dir: dir, Role: role})
+		}
+	}
+
+	// Scan rigs
+	entries, err := os.ReadDir(townRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == "mayor" || entry.Name() == "deacon" ||
+			entry.Name() == ".beads" || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+
+		rigName := entry.Name()
+		rigPath := filepath.Join(townRoot, rigName)
+
+		if !isRig(rigPath) {
+			continue
+		}
+
+		// Map subdirectories to roles
+		for _, sub := range []struct{ dir, role string }{
+			{"crew", "crew"},
+			{"polecats", "polecat"},
+			{"witness", "witness"},
+			{"refinery", "refinery"},
+		} {
+			dir := filepath.Join(rigPath, sub.dir)
+			if info, err := os.Stat(dir); err == nil && info.IsDir() {
+				locations = append(locations, RoleLocation{Dir: dir, Rig: rigName, Role: sub.role})
+			}
+		}
+	}
+
+	return locations, nil
+}
+
+// DiscoverWorktrees returns subdirectories within a role parent directory that
+// are individual worktrees (e.g., crew/alice, crew/bob, polecats/toast).
+// Skips hidden directories and non-directories.
+func DiscoverWorktrees(roleDir string) []string {
+	entries, err := os.ReadDir(roleDir)
+	if err != nil {
+		return nil
+	}
+
+	var dirs []string
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		dirs = append(dirs, filepath.Join(roleDir, entry.Name()))
+	}
+	return dirs
+}
+
 // isRig checks if a directory looks like a rig (has crew/, witness/, or polecats/ subdirectory).
 func isRig(path string) bool {
 	for _, sub := range []string{"crew", "witness", "polecats", "refinery"} {
