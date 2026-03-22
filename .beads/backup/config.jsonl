@@ -8,5 +8,6 @@
 {"key":"compact_tier2_dep_levels","value":"5"}
 {"key":"compaction_enabled","value":"false"}
 {"key":"issue_prefix","value":"gal"}
+{"key":"kv.memory.feedback.dolt-daemon-path-fix","value":"daemon.json at /Users/jeremy/Documents/gt/mayor/daemon.json must have data_dir pointing to /Users/jeremy/Documents/gt/.dolt-data (not /Users/jeremy/gt/.dolt-data). The daemon reads this at startup and uses it for auto-restart. If you see stale dolt processes at wrong path: (1) fix daemon.json data_dir, (2) kill wrong-path dolt, (3) gt daemon stop \u0026\u0026 gt daemon start to reload config, (4) gt dolt start."}
 {"key":"schema_version","value":"7"}
 {"key":"types.custom","value":"agent,role,rig,convoy,slot,queue,event,message,molecule,gate,merge-request"}
