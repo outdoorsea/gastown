@@ -12,6 +12,8 @@
 {"issue_id":"gal-1tq","label":"gt:message"}
 {"issue_id":"gal-29g","label":"from:deacon/"}
 {"issue_id":"gal-29g","label":"gt:message"}
+{"issue_id":"gal-2mt","label":"from:deacon/"}
+{"issue_id":"gal-2mt","label":"gt:message"}
 {"issue_id":"gal-36t","label":"from:meety_me/refinery"}
 {"issue_id":"gal-36t","label":"gt:message"}
 {"issue_id":"gal-3hk","label":"delivery:pending"}
@@ -30,6 +32,8 @@
 {"issue_id":"gal-3oh","label":"msg-type:escalation"}
 {"issue_id":"gal-3oh","label":"severity:high"}
 {"issue_id":"gal-3oh","label":"thread:gal-wisp-jfh"}
+{"issue_id":"gal-4x0","label":"from:deacon/"}
+{"issue_id":"gal-4x0","label":"gt:message"}
 {"issue_id":"gal-59u","label":"delivery:pending"}
 {"issue_id":"gal-59u","label":"escalation:gal-wisp-0zq"}
 {"issue_id":"gal-59u","label":"from:rally_tavern/witness"}
@@ -38,8 +42,12 @@
 {"issue_id":"gal-59u","label":"msg-type:escalation"}
 {"issue_id":"gal-59u","label":"severity:high"}
 {"issue_id":"gal-59u","label":"thread:gal-wisp-0zq"}
+{"issue_id":"gal-5ig","label":"from:deacon/"}
+{"issue_id":"gal-5ig","label":"gt:message"}
 {"issue_id":"gal-5su","label":"from:rally_tavern/witness"}
 {"issue_id":"gal-5su","label":"gt:message"}
+{"issue_id":"gal-5sv","label":"from:deacon/"}
+{"issue_id":"gal-5sv","label":"gt:message"}
 {"issue_id":"gal-79z","label":"from:theoutlived/refinery"}
 {"issue_id":"gal-79z","label":"gt:message"}
 {"issue_id":"gal-82h","label":"from:lilypad_chat/refinery"}
@@ -56,6 +64,8 @@
 {"issue_id":"gal-8ug","label":"gt:message"}
 {"issue_id":"gal-9jw","label":"from:meety_me/refinery"}
 {"issue_id":"gal-9jw","label":"gt:message"}
+{"issue_id":"gal-a70","label":"from:deacon/"}
+{"issue_id":"gal-a70","label":"gt:message"}
 {"issue_id":"gal-aab","label":"from:rally_tavern/witness"}
 {"issue_id":"gal-aab","label":"gt:message"}
 {"issue_id":"gal-b7g","label":"from:rally_tavern/witness"}
@@ -104,6 +114,8 @@
 {"issue_id":"gal-iw5","label":"msg-type:escalation"}
 {"issue_id":"gal-iw5","label":"severity:high"}
 {"issue_id":"gal-iw5","label":"thread:gal-wisp-gl6"}
+{"issue_id":"gal-jqa","label":"from:deacon/"}
+{"issue_id":"gal-jqa","label":"gt:message"}
 {"issue_id":"gal-lkq","label":"from:rally_tavern/witness"}
 {"issue_id":"gal-lkq","label":"gt:message"}
 {"issue_id":"gal-lwk","label":"from:gastown/witness"}
@@ -151,6 +163,8 @@
 {"issue_id":"gal-rir","label":"msg-type:escalation"}
 {"issue_id":"gal-rir","label":"severity:high"}
 {"issue_id":"gal-rir","label":"thread:gal-wisp-4kw"}
+{"issue_id":"gal-t8l","label":"from:deacon/"}
+{"issue_id":"gal-t8l","label":"gt:message"}
 {"issue_id":"gal-xps","label":"from:rally_tavern/witness"}
 {"issue_id":"gal-xps","label":"gt:message"}
 {"issue_id":"gal-zmd","label":"from:rally_tavern/refinery"}
