@@ -18,15 +18,15 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-// validDBName matches safe database names (alphanumeric + underscore only).
-var validDBName = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+// validDBName matches safe database names (alphanumeric, underscore, hyphen).
+var validDBName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // DefaultDatabases is the static fallback list of known production databases.
 // Used only when SHOW DATABASES fails (server unreachable).
-// GH#2385: Removed legacy "gt" name — modern towns use "hq" (town beads) and
-// rig-specific names. The "gt" database no longer exists in most installations
-// and its presence in the fallback caused false "database not found" errors.
-var DefaultDatabases = []string{"hq", "bd"}
+// GH#2385: Removed legacy "gt" and "bd" names — modern towns use "hq" (town
+// beads) and rig-specific names. Those databases no longer exist in most
+// installations and their presence in the fallback caused phantom DB errors.
+var DefaultDatabases = []string{"hq"}
 
 // testPollutionPrefixes are database name prefixes created by tests.
 var testPollutionPrefixes = []string{"testdb_", "beads_t", "beads_pt", "doctest_"}
@@ -502,11 +502,15 @@ func purgeClosedWisps(db *sql.DB, dbName string, purgeAge time.Duration, dryRun 
 		}
 		commitMsg := fmt.Sprintf("reaper: purge %d closed wisps from %s", totalDeleted, dbName)
 		if _, err := db.ExecContext(ctx, fmt.Sprintf("CALL DOLT_COMMIT('-Am', '%s')", commitMsg)); err != nil { //nolint:gosec // G201: commitMsg from safe values
-			// Non-fatal — log but continue.
-			anomalies = append(anomalies, Anomaly{
-				Type:    "dolt_commit_failed",
-				Message: fmt.Sprintf("dolt commit after purge failed: %v", err),
-			})
+			// "nothing to commit" is expected when wisps are dolt_ignored — deletes
+			// are auto-committed by the SQL layer and Dolt has nothing to version.
+			if !isNothingToCommit(err) {
+				// Non-fatal — log but continue.
+				anomalies = append(anomalies, Anomaly{
+					Type:    "dolt_commit_failed",
+					Message: fmt.Sprintf("dolt commit after purge failed: %v", err),
+				})
+			}
 		}
 	}
 
@@ -661,10 +665,13 @@ func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (
 		}
 		commitMsg := fmt.Sprintf("reaper: auto-close %d stale issues in %s", len(ids), dbName)
 		if _, err := db.ExecContext(ctx, fmt.Sprintf("CALL DOLT_COMMIT('-Am', '%s')", commitMsg)); err != nil { //nolint:gosec // G201: commitMsg from safe values
-			result.Anomalies = append(result.Anomalies, Anomaly{
-				Type:    "dolt_commit_failed",
-				Message: fmt.Sprintf("dolt commit after auto-close failed: %v", err),
-			})
+			// "nothing to commit" is expected when the updated tables are dolt_ignored.
+			if !isNothingToCommit(err) {
+				result.Anomalies = append(result.Anomalies, Anomaly{
+					Type:    "dolt_commit_failed",
+					Message: fmt.Sprintf("dolt commit after auto-close failed: %v", err),
+				})
+			}
 		}
 	}
 

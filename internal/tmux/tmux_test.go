@@ -1705,6 +1705,32 @@ func TestNudgeSession_WithRetry(t *testing.T) {
 	}
 }
 
+// TestAdaptiveTextDelay verifies the delay scaling logic for post-text delivery.
+func TestAdaptiveTextDelay(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		msgLen  int
+		wantMin time.Duration
+		wantMax time.Duration
+	}{
+		{"empty", 0, 500 * time.Millisecond, 500 * time.Millisecond},
+		{"small single chunk", 100, 500 * time.Millisecond, 500 * time.Millisecond},
+		{"exactly one chunk", 512, 500 * time.Millisecond, 500 * time.Millisecond},
+		{"two chunks", 513, 525 * time.Millisecond, 525 * time.Millisecond},
+		{"five chunks", 2048 + 1, 600 * time.Millisecond, 600 * time.Millisecond},
+		{"huge message capped", 100000, 2 * time.Second, 2 * time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := adaptiveTextDelay(tt.msgLen)
+			if got < tt.wantMin || got > tt.wantMax {
+				t.Errorf("adaptiveTextDelay(%d) = %v, want [%v, %v]", tt.msgLen, got, tt.wantMin, tt.wantMax)
+			}
+		})
+	}
+}
+
 // TestMatchesPromptPrefix verifies that prompt matching handles non-breaking
 // spaces (NBSP, U+00A0) correctly. Claude Code uses NBSP after its > prompt
 // character, but the default ReadyPromptPrefix uses a regular space.
@@ -1784,6 +1810,29 @@ func TestWaitForIdle_Timeout(t *testing.T) {
 	}
 	if !errors.Is(err, ErrIdleTimeout) {
 		t.Errorf("expected ErrIdleTimeout, got: %v", err)
+	}
+}
+
+func TestHasBusyIndicator(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"claude status busy", "⏵⏵ bypass permissions on ... · esc to interrupt", true},
+		{"codex status busy", "• Working (2m 18s • esc to interrupt)", true},
+		{"idle line", "› Review ready notification", false},
+		{"blank", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasBusyIndicator(tt.line); got != tt.want {
+				t.Errorf("hasBusyIndicator(%q) = %v, want %v", tt.line, got, tt.want)
+			}
+		})
 	}
 }
 

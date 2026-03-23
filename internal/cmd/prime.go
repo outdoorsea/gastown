@@ -408,6 +408,7 @@ func outputRoleContext(ctx RoleContext) (string, error) {
 		return "", err
 	}
 
+	outputRoleDirectives(ctx)
 	outputContextFile(ctx)
 	outputHandoffContent(ctx)
 	outputAttachmentStatus(ctx)
@@ -746,6 +747,15 @@ func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasMole
 		fmt.Printf("2. Then IMMEDIATELY run: `bd show %s`\n", hookedBead.ID)
 		fmt.Println("3. Begin execution - no waiting for user input")
 	}
+
+	// Polecats MUST call gt done — this is the single most important instruction.
+	// Without it, work lands but sessions accumulate and the merge queue stalls.
+	if ctx.Role == RolePolecat {
+		fmt.Println()
+		fmt.Printf("**⚠️ MANDATORY: When all work is committed, run `%s done` to submit and exit.**\n", cli.Name())
+		fmt.Printf("Do NOT stop at the prompt. Do NOT push to main directly. `%s done` is your final action.\n", cli.Name())
+	}
+
 	fmt.Println()
 	fmt.Println("**DO NOT:**")
 	fmt.Println("- Wait for user response after announcing")
@@ -754,6 +764,10 @@ func outputAutonomousDirective(ctx RoleContext, hookedBead *beads.Issue, hasMole
 	fmt.Println("- Check mail first (hook takes priority)")
 	if hasMolecule {
 		fmt.Println("- Skip molecule steps or work on the base bead directly")
+	}
+	if ctx.Role == RolePolecat {
+		fmt.Printf("- Sit idle after committing (run `%s done`)\n", cli.Name())
+		fmt.Println("- Push directly to main (use the merge queue)")
 	}
 	fmt.Println()
 }
@@ -807,7 +821,7 @@ func outputMoleculeWorkflow(ctx RoleContext, attachment *beads.AttachmentFields)
 
 	// Show inline formula steps from the embedded binary (root-only: no child wisps to query).
 	if attachment.AttachedFormula != "" {
-		showFormulaStepsFull(attachment.AttachedFormula, strings.Split(attachment.FormulaVars, "\n"))
+		showFormulaStepsFull(attachment.AttachedFormula, ctx.TownRoot, ctx.Rig, strings.Split(attachment.FormulaVars, "\n"))
 		fmt.Println()
 		fmt.Printf("%s\n", style.Bold.Render("Work through ALL steps above, including submit and cleanup."))
 		fmt.Println("The base bead is your assignment. The formula steps define your workflow.")
@@ -828,7 +842,7 @@ func outputMoleculeWorkflow(ctx RoleContext, attachment *beads.AttachmentFields)
 // through formula steps iteratively, committing after each meaningful change,
 // and calls gt done when all acceptance criteria are met or no further progress
 // can be made.
-func outputRalphLoopDirective(_ RoleContext, attachment *beads.AttachmentFields) {
+func outputRalphLoopDirective(ctx RoleContext, attachment *beads.AttachmentFields) {
 	fmt.Printf("%s\n\n", style.Bold.Render("## RALPH LOOP MODE (ITERATIVE WORKFLOW)"))
 	fmt.Println("This work uses iterative loop mode. Work through the steps below,")
 	fmt.Println("committing after each meaningful change. Loop until acceptance criteria")
@@ -839,7 +853,7 @@ func outputRalphLoopDirective(_ RoleContext, attachment *beads.AttachmentFields)
 	// the full checklist. Previously this emitted a /ralph-loop slash command
 	// that didn't exist, causing the polecat to die immediately.
 	if attachment.AttachedFormula != "" {
-		showFormulaStepsFull(attachment.AttachedFormula, strings.Split(attachment.FormulaVars, "\n"))
+		showFormulaStepsFull(attachment.AttachedFormula, ctx.TownRoot, ctx.Rig, strings.Split(attachment.FormulaVars, "\n"))
 		fmt.Println()
 	}
 

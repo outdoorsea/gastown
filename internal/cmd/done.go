@@ -48,6 +48,8 @@ Exit statuses:
 Examples:
   gt done                              # Submit branch, notify COMPLETED, transition to IDLE
   gt done --pre-verified               # Submit with pre-verification fast-path
+  gt done --target feat/my-branch      # Explicit MR target branch
+  gt done --pre-verified --target feat/contract-review  # Pre-verified with explicit target
   gt done --issue gt-abc               # Explicit issue ID
   gt done --status ESCALATED           # Signal blocker, skip MR
   gt done --status DEFERRED            # Pause work, skip MR`,
@@ -62,6 +64,7 @@ var (
 	doneCleanupStatus string
 	doneResume        bool
 	donePreVerified   bool
+	doneTarget        string
 )
 
 // Valid exit types for gt done
@@ -78,6 +81,7 @@ func init() {
 	doneCmd.Flags().StringVar(&doneCleanupStatus, "cleanup-status", "", "Git cleanup status: clean, uncommitted, unpushed, stash, unknown (ZFC: agent-observed)")
 	doneCmd.Flags().BoolVar(&doneResume, "resume", false, "Resume from last checkpoint (auto-detected, for Witness recovery)")
 	doneCmd.Flags().BoolVar(&donePreVerified, "pre-verified", false, "Mark MR as pre-verified (polecat ran gates after rebasing onto target)")
+	doneCmd.Flags().StringVar(&doneTarget, "target", "", "Explicit MR target branch (overrides formula_vars and auto-detection)")
 
 	rootCmd.AddCommand(doneCmd)
 }
@@ -761,24 +765,36 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		}
 
 		// Determine target branch for the MR.
-		// Priority: explicit --base-branch > integration branch auto-detect > rig default.
+		// Priority: explicit --target flag > formula_vars base_branch > integration branch auto-detect > rig default.
 		target := defaultBranch
 
-		// Check for explicit --base-branch override (stored in formula vars at sling time).
-		// When gt sling is called with --base-branch, the value is persisted in the bead's
-		// formula_vars field. If it differs from the rig's default branch, use it as the
-		// MR target so the refinery merges into the correct branch (GH#2357).
-		if sourceIssueForNoMerge != nil {
+		// 1. Explicit --target flag (highest priority — polecat knows its base branch).
+		// This is the most reliable path: the formula passes {{base_branch}} directly,
+		// avoiding any dependency on bd.Show() or Dolt availability.
+		if doneTarget != "" && doneTarget != defaultBranch {
+			target = doneTarget
+			fmt.Printf("  Target branch: %s (from --target flag)\n", target)
+		}
+
+		// 2. Check for --base-branch override in formula vars (stored on bead at sling time).
+		// Fallback for polecats dispatched before --target flag existed, or when
+		// the formula doesn't pass --target explicitly.
+		if target == defaultBranch && sourceIssueForNoMerge != nil {
 			if af := beads.ParseAttachmentFields(sourceIssueForNoMerge); af != nil {
 				if bb := extractFormulaVar(af.FormulaVars, "base_branch"); bb != "" && bb != defaultBranch {
 					target = bb
-					fmt.Printf("  Target branch override: %s (from --base-branch)\n", target)
+					fmt.Printf("  Target branch override: %s (from formula_vars)\n", target)
 				}
 			}
+		} else if target == defaultBranch && sourceIssueForNoMerge == nil && issueID != "" {
+			// sourceIssueForNoMerge is nil — bd.Show(issueID) failed earlier.
+			// This is the silent failure path that caused 150+ procedure beads to
+			// target main instead of feat/contract-review-procedure.
+			style.PrintWarning("could not load source issue %s for target branch detection (Dolt/beads lookup failed) — using default branch %s", issueID, defaultBranch)
 		}
 
-		// Auto-detect integration branch from epic hierarchy (if enabled).
-		// Only overrides if no explicit --base-branch was set (target == defaultBranch).
+		// 3. Auto-detect integration branch from epic hierarchy (if enabled).
+		// Only overrides if no explicit target was set above.
 		if target == defaultBranch {
 			refineryEnabled := true
 			settingsPath := filepath.Join(townRoot, rigName, "settings", "config.json")
@@ -808,6 +824,13 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 
 		// Pre-declare for checkpoint goto (gt-aufru)
 		var existingMR *beads.Issue
+		var commitSHA string
+
+		// GH#3032: Resolve HEAD commit SHA for MR dedup.
+		// Branch name alone is not a valid dedup key — a polecat may push new
+		// commits to the same branch after a gate failure. The commit SHA
+		// distinguishes genuinely new submissions from idempotent retries.
+		commitSHA, _ = g.Rev("HEAD")
 
 		// Resume: skip MR creation if already completed in a previous run (gt-aufru).
 		// Mirrors the push checkpoint pattern above. Without this, every retry
@@ -818,15 +841,19 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			goto afterMR
 		}
 
-		// Check if MR bead already exists for this branch (idempotency)
-		existingMR, err = bd.FindMRForBranch(branch)
+		// Check if MR bead already exists for this branch+SHA (idempotency)
+		if commitSHA != "" {
+			existingMR, err = bd.FindMRForBranchAndSHA(branch, commitSHA)
+		} else {
+			existingMR, err = bd.FindMRForBranch(branch)
+		}
 		if err != nil {
 			style.PrintWarning("could not check for existing MR: %v", err)
 			// Continue with creation attempt - Create will fail if duplicate
 		}
 
 		if existingMR != nil {
-			// MR already exists - use it instead of creating a new one
+			// MR already exists with same branch AND commit — true idempotent retry
 			mrID = existingMR.ID
 			fmt.Printf("%s MR already exists (idempotent)\n", style.Bold.Render("✓"))
 			fmt.Printf("  MR ID: %s\n", style.Bold.Render(mrID))
@@ -835,6 +862,9 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			title := fmt.Sprintf("Merge: %s", issueID)
 			description := fmt.Sprintf("branch: %s\ntarget: %s\nsource_issue: %s\nrig: %s",
 				branch, target, issueID, rigName)
+			if commitSHA != "" {
+				description += fmt.Sprintf("\ncommit_sha: %s", commitSHA)
+			}
 			if worker != "" {
 				description += fmt.Sprintf("\nworker: %s", worker)
 			}
@@ -900,6 +930,26 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 				doneErrors = append(doneErrors, errMsg)
 				style.PrintWarning("%s\nBranch is pushed but MR bead not confirmed. Preserving worktree.", errMsg)
 				goto notifyWitness
+			}
+
+			// GH#3032: Supersede older open MRs for the same source issue.
+			// When a polecat re-submits after fixing a gate failure, the old MR
+			// (same branch, different SHA) is stale. Close it so the refinery
+			// doesn't process the old submission.
+			if issueID != "" {
+				if oldMRs, findErr := bd.FindOpenMRsForIssue(issueID); findErr == nil {
+					for _, old := range oldMRs {
+						if old.ID == mrID {
+							continue // skip the one we just created
+						}
+						reason := fmt.Sprintf("superseded by %s", mrID)
+						if closeErr := bd.CloseWithReason(reason, old.ID); closeErr != nil {
+							style.PrintWarning("could not supersede old MR %s: %v", old.ID, closeErr)
+							continue
+						}
+						fmt.Printf("  %s Superseded old MR: %s\n", style.Dim.Render("○"), old.ID)
+					}
+				}
 			}
 
 			// Update agent bead with active_mr reference (for traceability)
