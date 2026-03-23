@@ -789,12 +789,12 @@ func (m *DoltServerManager) startLocked() error {
 		return fmt.Errorf("dolt not found in PATH: %w", err)
 	}
 
-	// Build command arguments
-	args := []string{
-		"sql-server",
-		"--host", m.config.Host,
-		"--port", strconv.Itoa(m.config.Port),
-		"--data-dir", m.config.DataDir,
+	// Write config.yaml so Dolt gets all required settings (timeouts, data_dir,
+	// etc.). Using --config instead of CLI flags matches gt dolt start behaviour
+	// and prevents CLOSE_WAIT accumulation from missing timeout settings.
+	configPath := filepath.Join(m.config.DataDir, "config.yaml")
+	if err := writeDaemonDoltConfig(m.config, configPath); err != nil {
+		return fmt.Errorf("writing dolt config.yaml: %w", err)
 	}
 
 	// Open log file
@@ -803,8 +803,9 @@ func (m *DoltServerManager) startLocked() error {
 		return fmt.Errorf("opening log file: %w", err)
 	}
 
-	// Start dolt sql-server as background process
-	cmd := exec.Command(doltPath, args...)
+	// Start dolt sql-server as background process using --config (not CLI flags).
+	// CLI flags are ignored when --config is used; the config.yaml is authoritative.
+	cmd := exec.Command(doltPath, "sql-server", "--config", configPath)
 	cmd.Dir = m.config.DataDir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -846,6 +847,37 @@ func (m *DoltServerManager) startLocked() error {
 	}
 
 	return nil
+}
+
+// writeDaemonDoltConfig writes a minimal Dolt config.yaml for daemon-managed
+// server instances. Mirrors doltserver.writeServerConfig to ensure consistent
+// settings (especially read/write timeouts) regardless of whether Dolt was
+// started via `gt dolt start` or the daemon's DoltServerManager.
+func writeDaemonDoltConfig(cfg *DoltServerConfig, configPath string) error {
+	hostLine := ""
+	if cfg.Host != "" {
+		hostLine = fmt.Sprintf("\n  host: %s", cfg.Host)
+	}
+	content := fmt.Sprintf(`# Dolt SQL server configuration — managed by Gas Town daemon
+# Do not edit manually; overwritten on each daemon-managed server start.
+
+log_level: info
+
+listener:
+  port: %d%s
+  read_timeout_millis: 30000
+  write_timeout_millis: 30000
+  max_connections: 1000
+
+data_dir: "%s"
+
+behavior:
+  dolt_transaction_commit: true
+  auto_gc_behavior:
+    enable: true
+    archive_level: 1
+`, cfg.Port, hostLine, cfg.DataDir)
+	return os.WriteFile(configPath, []byte(content), 0600)
 }
 
 // Stop stops the Dolt SQL server.
