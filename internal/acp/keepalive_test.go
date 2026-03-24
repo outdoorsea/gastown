@@ -98,7 +98,10 @@ func TestProxy_RunKeepAlive_Logic(t *testing.T) {
 		if msg.Method != "session/set_mode" {
 			t.Errorf("expected session/set_mode after recovery, got %q", msg.Method)
 		}
-		if p.activePromptID != "" {
+		p.promptMux.Lock()
+		activeID := p.activePromptID
+		p.promptMux.Unlock()
+		if activeID != "" {
 			t.Error("expected activePromptID to be cleared after recovery")
 		}
 	case <-time.After(1 * time.Second):

@@ -330,6 +330,7 @@ func createBatchConvoy(beadIDs []string, rigName string, owned bool, mergeStrate
 		"--id=" + convoyID,
 		"--title=" + convoyTitle,
 		"--description=" + description,
+		"--db=" + townBeads,
 	}
 	if owned {
 		createArgs = append(createArgs, "--labels=gt:owned")
@@ -340,15 +341,16 @@ func createBatchConvoy(beadIDs []string, rigName string, owned bool, mergeStrate
 
 	// Use BdCmd with WithAutoCommit to ensure convoy is persisted even when
 	// gt sling has set BD_DOLT_AUTO_COMMIT=off globally (gt-9xum2 root cause fix).
-	if out, err := BdCmd(createArgs...).Dir(townBeads).WithAutoCommit().CombinedOutput(); err != nil {
+	// --db bypasses route-based resolution that fails on hq-cv- prefix mismatch.
+	if out, err := BdCmd(createArgs...).Dir(townRoot).WithAutoCommit().CombinedOutput(); err != nil {
 		return "", nil, fmt.Errorf("creating batch convoy: %w\noutput: %s", err, out)
 	}
 
 	// Add tracking relations for all beads, recording which succeed.
-	// Use WithAutoCommit for the same reason as above.
+	// Use --db to bypass route-based resolution for hq-cv- prefixed convoy ID.
 	var tracked []string
 	for _, beadID := range beadIDs {
-		depArgs := []string{"dep", "add", convoyID, beadID, "--type=tracks"}
+		depArgs := []string{"dep", "add", convoyID, beadID, "--type=tracks", "--db=" + townBeads}
 		if out, err := BdCmd(depArgs...).Dir(townRoot).WithAutoCommit().StripBeadsDir().CombinedOutput(); err != nil {
 			// Log but continue — partial tracking is better than no tracking
 			fmt.Printf("  Warning: could not track %s in convoy: %v\nOutput: %s\n", beadID, err, out)
@@ -396,6 +398,7 @@ func createAutoConvoy(beadID, beadTitle string, owned bool, mergeStrategy, baseB
 		"--id=" + convoyID,
 		"--title=" + convoyTitle,
 		"--description=" + description,
+		"--db=" + townBeads,
 	}
 	if owned {
 		createArgs = append(createArgs, "--labels=gt:owned")
@@ -406,18 +409,18 @@ func createAutoConvoy(beadID, beadTitle string, owned bool, mergeStrategy, baseB
 
 	// Use BdCmd with WithAutoCommit to ensure convoy is persisted even when
 	// gt sling has set BD_DOLT_AUTO_COMMIT=off globally (gt-9xum2 root cause fix).
-	if out, err := BdCmd(createArgs...).Dir(townBeads).WithAutoCommit().CombinedOutput(); err != nil {
+	// --db bypasses route-based resolution that fails on hq-cv- prefix mismatch.
+	if out, err := BdCmd(createArgs...).Dir(townRoot).WithAutoCommit().CombinedOutput(); err != nil {
 		return "", fmt.Errorf("creating convoy: %w\noutput: %s", err, out)
 	}
 
 	// Add tracking relation: convoy tracks the issue.
-	// Pass the raw beadID and let bd handle cross-rig resolution via routes.jsonl,
-	// matching what gt convoy create/add already do (convoy.go:368, convoy.go:464).
+	// Use --db to bypass route-based resolution for the hq-cv- prefixed convoy ID.
 	// Use WithAutoCommit for the same reason as above.
-	depArgs := []string{"dep", "add", convoyID, beadID, "--type=tracks"}
+	depArgs := []string{"dep", "add", convoyID, beadID, "--type=tracks", "--db=" + townBeads}
 	if out, err := BdCmd(depArgs...).Dir(townRoot).WithAutoCommit().StripBeadsDir().CombinedOutput(); err != nil {
 		// Tracking failed — delete the orphan convoy to prevent accumulation
-		_ = BdCmd("close", convoyID, "-r", "tracking dep failed").Dir(townRoot).StripBeadsDir().Run()
+		_ = BdCmd("close", convoyID, "-r", "tracking dep failed", "--db="+townBeads).Dir(townRoot).StripBeadsDir().Run()
 		return "", fmt.Errorf("adding tracking relation for %s: %w\noutput: %s", beadID, err, out)
 	}
 

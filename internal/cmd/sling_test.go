@@ -1724,7 +1724,8 @@ exit /b 0
 		t.Fatalf("read bd log: %v", err)
 	}
 
-	// Verify that ALL bd commands received BD_DOLT_AUTO_COMMIT=off
+	// Verify that all bd commands received BD_DOLT_AUTO_COMMIT=off.
+	// Since dc1d11db, hook writes no longer use WithAutoCommit().
 	logLines := strings.Split(strings.TrimSpace(string(logBytes)), "\n")
 	if len(logLines) == 0 {
 		t.Fatal("no bd commands logged")
@@ -1732,11 +1733,6 @@ exit /b 0
 
 	for _, line := range logLines {
 		if line == "" {
-			continue
-		}
-		// Commands using .WithAutoCommit() (e.g., "update --status=hooked")
-		// legitimately override to "on" for sequential consistency.
-		if strings.Contains(line, "update") && strings.Contains(line, "--status=hooked") {
 			continue
 		}
 		if !strings.Contains(line, "ENV:BD_DOLT_AUTO_COMMIT=off|") {
