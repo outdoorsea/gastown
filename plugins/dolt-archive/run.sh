@@ -13,10 +13,11 @@ set -euo pipefail
 DOLT_HOST="${DOLT_HOST:-127.0.0.1}"
 DOLT_PORT="${DOLT_PORT:-3307}"
 DOLT_USER="${DOLT_USER:-root}"
-DOLT_DATA_DIR="${DOLT_DATA_DIR:-$HOME/gt/.dolt-data}"
-JSONL_EXPORT_DIR="$HOME/gt/.dolt-archive/jsonl"
-BACKUP_REPO="$HOME/gt/.dolt-archive/git"
-DEFAULT_DBS="beads_hq,gt,lc,ma,mm,myndy_ios,rt,th,vitalitek,wr"
+TOWN_ROOT="${GT_TOWN_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+DOLT_DATA_DIR="${DOLT_DATA_DIR:-$TOWN_ROOT/.dolt-data}"
+JSONL_EXPORT_DIR="${TOWN_ROOT}/.dolt-archive/jsonl"
+BACKUP_REPO="${TOWN_ROOT}/.dolt-archive/git"
+DEFAULT_DBS="auto"
 SKIP_GIT=false
 SKIP_DOLT_PUSH=false
 
@@ -47,7 +48,7 @@ trap 'rm -f "$LOGFILE"' EXIT
 dolt_query() {
   local db="$1"
   local query="$2"
-  local args=(dolt --host "$DOLT_HOST" --port "$DOLT_PORT" --no-tls -u "$DOLT_USER" -p "")
+  local args=(dolt --host="$DOLT_HOST" --port="$DOLT_PORT" --no-tls -u "$DOLT_USER" -p "")
   if [[ -n "$db" ]]; then
     args+=(--use-db "$db")
   fi
@@ -58,13 +59,29 @@ dolt_query() {
 dolt_query_json() {
   local db="$1"
   local query="$2"
-  dolt --host "$DOLT_HOST" --port "$DOLT_PORT" --no-tls -u "$DOLT_USER" -p "" \
+  dolt --host="$DOLT_HOST" --port="$DOLT_PORT" --no-tls -u "$DOLT_USER" -p "" \
     --use-db "$db" sql -q "$query" --result-format json 2>>"$LOGFILE"
 }
 
-# --- Step 1: JSONL export ----------------------------------------------------
+# --- Step 1: Discover databases ----------------------------------------------
 
-IFS=',' read -ra PROD_DBS <<< "$DEFAULT_DBS"
+if [[ "$DEFAULT_DBS" == "auto" ]]; then
+  log "Auto-discovering databases from Dolt server..."
+  DISCOVERED=$(dolt_query "" "SHOW DATABASES" | grep -vE '^(information_schema|mysql|dolt)$')
+  if [[ -z "$DISCOVERED" ]]; then
+    log "ERROR: No user databases found on Dolt server at $DOLT_HOST:$DOLT_PORT"
+    exit 1
+  fi
+  PROD_DBS=()
+  while IFS= read -r _db; do
+    [[ -n "$_db" ]] && PROD_DBS+=("$_db")
+  done <<< "$DISCOVERED"
+  log "Discovered ${#PROD_DBS[@]} databases: ${PROD_DBS[*]}"
+else
+  IFS=',' read -ra PROD_DBS <<< "$DEFAULT_DBS"
+fi
+
+# --- Step 2: JSONL export ----------------------------------------------------
 
 log "Starting archive cycle (databases: ${PROD_DBS[*]})"
 mkdir -p "$JSONL_EXPORT_DIR"
@@ -73,36 +90,20 @@ EXPORTED=0
 EXPORT_FAILED=0
 EXPORT_ERRORS=""
 
-# Build a map from dolt_database name → beads directory by scanning metadata.json files.
-# bd export must be run from the directory containing .beads/metadata.json.
-declare -A DB_BEADS_DIR
-for META in "$HOME/gt/.beads/metadata.json" "$HOME/gt"/*/mayor/rig/.beads/metadata.json; do
-  [[ -f "$META" ]] || continue
-  DB_NAME=$(python3 -c "import json; print(json.load(open('$META')).get('dolt_database',''))" 2>/dev/null)
-  [[ -n "$DB_NAME" ]] && DB_BEADS_DIR["$DB_NAME"]="$(dirname "$(dirname "$META")")"
-done
-
 for DB in "${PROD_DBS[@]}"; do
   EXPORT_FILE="$JSONL_EXPORT_DIR/${DB}-$(date +%Y%m%d-%H%M).jsonl"
   LATEST_LINK="$JSONL_EXPORT_DIR/${DB}-latest.jsonl"
 
   log "Exporting $DB..."
 
-  # Try bd export from the rig's beads directory (required for correct db resolution)
-  BD_EXPORTED=false
-  if [[ -n "${DB_BEADS_DIR[$DB]:-}" ]]; then
-    BEADS_DIR="${DB_BEADS_DIR[$DB]}"
-    if (cd "$BEADS_DIR" && bd export -o "$EXPORT_FILE") 2>/dev/null; then
-      LINE_COUNT=$(wc -l < "$EXPORT_FILE" | tr -d ' ')
-      FILE_SIZE=$(du -h "$EXPORT_FILE" | cut -f1)
-      log "  $DB: $LINE_COUNT issues exported ($FILE_SIZE) [bd export from $BEADS_DIR]"
-      ln -sf "$(basename "$EXPORT_FILE")" "$LATEST_LINK"
-      EXPORTED=$((EXPORTED + 1))
-      BD_EXPORTED=true
-    fi
-  fi
-
-  if ! $BD_EXPORTED; then
+  # Try bd export first (native beads export)
+  if bd export --db "$DB" --format jsonl > "$EXPORT_FILE" 2>/dev/null; then
+    LINE_COUNT=$(wc -l < "$EXPORT_FILE" | tr -d ' ')
+    FILE_SIZE=$(du -h "$EXPORT_FILE" | cut -f1)
+    log "  $DB: $LINE_COUNT issues exported ($FILE_SIZE) [bd export]"
+    ln -sf "$(basename "$EXPORT_FILE")" "$LATEST_LINK"
+    EXPORTED=$((EXPORTED + 1))
+  else
     # Fallback: query Dolt directly for issues table
     if dolt_query_json "$DB" "SELECT * FROM issues ORDER BY id" > "$EXPORT_FILE" 2>/dev/null && [[ -s "$EXPORT_FILE" ]]; then
       LINE_COUNT=$(wc -l < "$EXPORT_FILE" | tr -d ' ')
@@ -120,16 +121,19 @@ done
 
 # Prune old exports (keep last 24 snapshots per DB)
 for DB in "${PROD_DBS[@]}"; do
-  SNAPSHOTS=$(ls -t "$JSONL_EXPORT_DIR/${DB}-2"*.jsonl 2>/dev/null | tail -n +25)
-  if [[ -n "$SNAPSHOTS" ]]; then
-    echo "$SNAPSHOTS" | xargs rm -f
+  ALL_SNAPS=()
+  while IFS= read -r f; do
+    ALL_SNAPS+=("$f")
+  done < <(ls -t "$JSONL_EXPORT_DIR/${DB}-2"*.jsonl 2>/dev/null || true)
+  if (( ${#ALL_SNAPS[@]} > 24 )); then
+    printf '%s\n' "${ALL_SNAPS[@]:24}" | xargs rm -f
     log "Pruned old $DB snapshots"
   fi
 done
 
 log "JSONL export: $EXPORTED succeeded, $EXPORT_FAILED failed"
 
-# --- Step 2: Git commit and push ---------------------------------------------
+# --- Step 3: Git commit and push ---------------------------------------------
 
 GIT_PUSHED=false
 
@@ -174,7 +178,7 @@ elif ! $SKIP_GIT; then
   log "No git backup repo at $BACKUP_REPO — skipping git push"
 fi
 
-# --- Step 3: Dolt native push ------------------------------------------------
+# --- Step 4: Dolt native push ------------------------------------------------
 
 DOLT_PUSHED=0
 DOLT_PUSH_FAILED=0
@@ -200,7 +204,7 @@ if ! $SKIP_DOLT_PUSH; then
     log "  $DB: pushing to remotes..."
     cd "$DB_DIR"
 
-    for REMOTE_NAME in $(dolt remote -v 2>/dev/null | awk '{print $1}' | sort -u); do
+    for REMOTE_NAME in $(dolt remote -v 2>/dev/null | awk '{print $1}' | sort -u || true); do
       if timeout 120 dolt push "$REMOTE_NAME" main 2>/dev/null; then
         log "    $REMOTE_NAME: pushed"
         DOLT_PUSHED=$((DOLT_PUSHED + 1))
@@ -214,7 +218,7 @@ if ! $SKIP_DOLT_PUSH; then
   log "Dolt push: $DOLT_PUSHED succeeded, $DOLT_PUSH_FAILED failed"
 fi
 
-# --- Step 4: Report results --------------------------------------------------
+# --- Step 5: Report results --------------------------------------------------
 
 log ""
 log "=== Archive Cycle Complete ==="

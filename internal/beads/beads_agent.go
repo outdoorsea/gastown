@@ -221,7 +221,6 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 			"--description=" + description,
 			"--type=agent",
 			"--labels=gt:agent",
-			"--no-history",
 		}
 		if NeedsForceForID(id) {
 			a = append(a, "--force")
@@ -234,9 +233,8 @@ func (b *Beads) CreateAgentBead(id, title string, fields *AgentFields) (*Issue, 
 		return a
 	}
 
-	// Create agent bead in the issues table with --no-history to skip
-	// git commit overhead. Agent beads are durable identities that must
-	// survive wisp GC (GH#2768).
+	// Create agent bead in the issues table. Agent beads are durable
+	// identities that must survive wisp GC (GH#2768).
 	out, err := b.run(buildArgs()...)
 	if err != nil {
 		out, err = b.run(buildArgs()...)
@@ -345,12 +343,6 @@ func (b *Beads) CreateOrReopenAgentBead(id, title string, fields *AgentFields) (
 	if _, err := target.run("update", id, "--type=agent"); err != nil {
 		return nil, fmt.Errorf("fixing agent bead type: %w", err)
 	}
-	// Ensure agent bead uses --no-history to skip git commit overhead
-	// without making it a wisp (GH#2768: wisps get GC'd, killing agent identities)
-	if _, err := target.run("update", id, "--no-history"); err != nil {
-		// Non-fatal: the bead is functional without --no-history flag
-		_ = err
-	}
 
 	// Note: role slot no longer set - role definitions are config-based
 
@@ -424,7 +416,8 @@ func (b *Beads) ResetAgentBeadForReuse(id, reason string) error {
 }
 
 // UpdateAgentState updates the agent_state field in an agent bead.
-// Uses `bd agent state` command for the database column directly.
+// Uses `bd agent state` command for the database column directly,
+// then syncs the description's agent_state field to match (gt-ulom).
 func (b *Beads) UpdateAgentState(id string, state string) (retErr error) {
 	defer func() { telemetry.RecordAgentStateChange(context.Background(), id, state, nil, retErr) }()
 	// Update agent state using bd agent state command
@@ -435,7 +428,11 @@ func (b *Beads) UpdateAgentState(id string, state string) (retErr error) {
 		return fmt.Errorf("updating agent state: %w", err)
 	}
 
-	// Hook slot no longer maintained (hq-l6mm5) — removed hook_bead parameter.
+	// Sync the description's agent_state field with the column (gt-ulom).
+	// Without this, the description stays stale (e.g., "spawning" after the
+	// column transitions to "working"), causing bd show and dashboards to
+	// display incorrect state after idle polecat reuse via gt sling.
+	_ = b.UpdateAgentDescriptionFields(id, AgentFieldUpdates{AgentState: &state})
 
 	return nil
 }
@@ -449,6 +446,7 @@ func (b *Beads) UpdateAgentState(id string, state string) (retErr error) {
 // This allows multiple fields to be updated in a single read-modify-write
 // cycle, avoiding races where concurrent callers overwrite each other's changes.
 type AgentFieldUpdates struct {
+	AgentState        *string // Sync description agent_state with column (gt-ulom)
 	CleanupStatus     *string
 	ActiveMR          *string
 	NotificationLevel *string
@@ -490,6 +488,9 @@ func (b *Beads) UpdateAgentDescriptionFields(id string, updates AgentFieldUpdate
 
 	fields := ParseAgentFields(issue.Description)
 
+	if updates.AgentState != nil {
+		fields.AgentState = *updates.AgentState
+	}
 	if updates.CleanupStatus != nil {
 		fields.CleanupStatus = *updates.CleanupStatus
 	}
@@ -636,7 +637,7 @@ func (b *Beads) ListAgentBeads() (map[string]*Issue, error) {
 	// doctor checks (for example, validating gt:agent labels).
 	// Agent beads are type=agent (infrastructure), hidden by bd list default filter.
 	// Use --include-infra so they appear in results.
-	out, err := b.run("list", "--label=gt:agent", "--include-infra", "--json", "--no-pager")
+	out, err := b.run("list", "--label=gt:agent", "--include-infra", "--json", "--flat", "--no-pager")
 	if err != nil {
 		return nil, err
 	}

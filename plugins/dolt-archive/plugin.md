@@ -31,9 +31,9 @@ whether the other layers work.
 ## Config
 
 ```bash
-DOLT_DATA_DIR="$HOME/gt/.dolt-data"
-PROD_DBS=("beads" "beads_gt" "beads_hq" "beads_mm" "gt" "lc" "lilypad_chat" "myndy_api" "myndy_ios" "rally_tavern" "theoutlived" "tr" "vitalitek" "wandering_river" "wr")
-JSONL_EXPORT_DIR="$HOME/gt/.dolt-archive/jsonl"
+DOLT_DATA_DIR="$GT_TOWN_ROOT/.dolt-data"
+PROD_DBS=("hq" "gt" "mo")
+JSONL_EXPORT_DIR="$GT_TOWN_ROOT/.dolt-archive/jsonl"
 DOLT_HOST="127.0.0.1"
 DOLT_PORT=3307
 DOLT_USER="root"
@@ -44,51 +44,50 @@ DOLT_USER="root"
 Export all issues from each production database to JSONL files. These are
 human-readable, diffable, and survive any storage backend failure.
 
-bd export must be run from a directory containing a .beads/metadata.json that
-points to the target Dolt database — passing --db with a bare db name does not
-work. We discover rig dirs dynamically rather than maintaining a hard-coded list.
-
 ```bash
 echo "=== JSONL Export ==="
 EXPORTED=0
 EXPORT_FAILED=0
-EXPORT_DBS=()   # DB names exported (for prune step below)
 
 mkdir -p "$JSONL_EXPORT_DIR"
 
-# Discover all beads directories: town root + each rig's mayor/rig/
-BEADS_DIRS=()
-[ -f "$HOME/gt/.beads/metadata.json" ] && BEADS_DIRS+=("$HOME/gt")
-for META in "$HOME/gt"/*/mayor/rig/.beads/metadata.json; do
-  [ -f "$META" ] && BEADS_DIRS+=("$(dirname "$(dirname "$META")")")
-done
-
-for BEADS_DIR in "${BEADS_DIRS[@]}"; do
-  META="$BEADS_DIR/.beads/metadata.json"
-  DB=$(python3 -c "import json; print(json.load(open('$META')).get('dolt_database',''))" 2>/dev/null)
-  [ -z "$DB" ] && continue
-
+for DB in "${PROD_DBS[@]}"; do
   EXPORT_FILE="$JSONL_EXPORT_DIR/${DB}-$(date +%Y%m%d-%H%M).jsonl"
   LATEST_LINK="$JSONL_EXPORT_DIR/${DB}-latest.jsonl"
 
-  echo "Exporting $DB (from $BEADS_DIR)..."
+  echo "Exporting $DB..."
 
-  if (cd "$BEADS_DIR" && bd export -o "$EXPORT_FILE") 2>/dev/null; then
+  # Use bd export if available, otherwise query directly
+  if bd export --db "$DB" --format jsonl > "$EXPORT_FILE" 2>/dev/null; then
     LINE_COUNT=$(wc -l < "$EXPORT_FILE" | tr -d ' ')
     FILE_SIZE=$(du -h "$EXPORT_FILE" | cut -f1)
     echo "  $DB: $LINE_COUNT issues exported ($FILE_SIZE)"
+
+    # Update latest symlink
     ln -sf "$EXPORT_FILE" "$LATEST_LINK"
     EXPORTED=$((EXPORTED + 1))
-    EXPORT_DBS+=("$DB")
   else
-    echo "  WARN: $DB export failed"
-    rm -f "$EXPORT_FILE"
-    EXPORT_FAILED=$((EXPORT_FAILED + 1))
+    # Fallback: query Dolt directly for issue data
+    dolt sql -q "SELECT * FROM issues ORDER BY id" \
+      --host "$DOLT_HOST" --port "$DOLT_PORT" -u "$DOLT_USER" \
+      -d "$DB" --no-auto-commit --result-format json \
+      > "$EXPORT_FILE" 2>/dev/null
+
+    if [ $? -eq 0 ] && [ -s "$EXPORT_FILE" ]; then
+      LINE_COUNT=$(wc -l < "$EXPORT_FILE" | tr -d ' ')
+      echo "  $DB: exported via SQL ($LINE_COUNT lines)"
+      ln -sf "$EXPORT_FILE" "$LATEST_LINK"
+      EXPORTED=$((EXPORTED + 1))
+    else
+      echo "  WARN: $DB export failed"
+      rm -f "$EXPORT_FILE"
+      EXPORT_FAILED=$((EXPORT_FAILED + 1))
+    fi
   fi
 done
 
 # Prune old exports (keep last 24 snapshots per DB)
-for DB in "${EXPORT_DBS[@]}"; do
+for DB in "${PROD_DBS[@]}"; do
   SNAPSHOTS=$(ls -t "$JSONL_EXPORT_DIR/${DB}-2"*.jsonl 2>/dev/null | tail -n +25)
   if [ -n "$SNAPSHOTS" ]; then
     echo "$SNAPSHOTS" | xargs rm -f

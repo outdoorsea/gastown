@@ -272,15 +272,31 @@ func (g *Git) CloneBare(url, dest string) error {
 	return g.cloneInternal(url, dest, cloneOptions{bare: true, singleBranch: true, depth: 1})
 }
 
+// CloneBareWithBranch clones a bare repo, checking out a specific branch.
+// Use this when the desired default branch differs from the remote HEAD.
+func (g *Git) CloneBareWithBranch(url, dest, branch string) error {
+	return g.cloneInternal(url, dest, cloneOptions{bare: true, singleBranch: true, depth: 1, branch: branch})
+}
+
 // CloneBarePartial clones a bare repo with a partial clone filter (e.g. "blob:none", "tree:0").
 // Does not use --depth since partial clones handle size reduction via the filter.
 func (g *Git) CloneBarePartial(url, dest, filter string) error {
 	return g.cloneInternal(url, dest, cloneOptions{bare: true, singleBranch: true, filter: filter})
 }
 
+// CloneBarePartialWithBranch clones a bare repo with a partial clone filter and specific branch.
+func (g *Git) CloneBarePartialWithBranch(url, dest, filter, branch string) error {
+	return g.cloneInternal(url, dest, cloneOptions{bare: true, singleBranch: true, filter: filter, branch: branch})
+}
+
 // CloneBarePartialWithReference clones a bare repo with a partial clone filter and local reference.
 func (g *Git) CloneBarePartialWithReference(url, dest, filter, reference string) error {
 	return g.cloneInternal(url, dest, cloneOptions{bare: true, singleBranch: true, filter: filter, reference: reference})
+}
+
+// CloneBarePartialWithReferenceAndBranch clones a bare repo with a partial clone filter, local reference, and specific branch.
+func (g *Git) CloneBarePartialWithReferenceAndBranch(url, dest, filter, reference, branch string) error {
+	return g.cloneInternal(url, dest, cloneOptions{bare: true, singleBranch: true, filter: filter, reference: reference, branch: branch})
 }
 
 // CloneBranchPartialWithReference clones a specific branch with a partial clone filter and reference.
@@ -385,6 +401,11 @@ func configureRefspec(repoPath string, singleBranch bool) error {
 // Uses --single-branch --depth 1 for efficiency on repos with many branches.
 func (g *Git) CloneBareWithReference(url, dest, reference string) error {
 	return g.cloneInternal(url, dest, cloneOptions{bare: true, reference: reference, singleBranch: true, depth: 1})
+}
+
+// CloneBareWithReferenceAndBranch clones a bare repo using a local reference, checking out a specific branch.
+func (g *Git) CloneBareWithReferenceAndBranch(url, dest, reference, branch string) error {
+	return g.cloneInternal(url, dest, cloneOptions{bare: true, reference: reference, singleBranch: true, depth: 1, branch: branch})
 }
 
 // Checkout checks out the given ref.
@@ -1840,6 +1861,12 @@ func (g *Git) SubmoduleChanges(base, head string) ([]SubmoduleChange, error) {
 			continue
 		}
 		path := strings.TrimSpace(parts[1])
+		// Skip .claude/ paths — Claude Code creates worktrees under
+		// .claude/worktrees/ with .git files (worktree pointers) that git
+		// reports as gitlinks. These are not real submodules. (gt-dg7)
+		if strings.HasPrefix(path, ".claude/") {
+			continue
+		}
 		fields := strings.Fields(parts[0])
 		if len(fields) < 5 {
 			continue
@@ -1946,7 +1973,11 @@ func (g *Git) PushSubmoduleCommit(submodulePath, sha, remote string) error {
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("pushing submodule %s commit %s: %s", submodulePath, sha[:8], strings.TrimSpace(stderr.String()))
+		abbrev := sha
+		if len(abbrev) > 8 {
+			abbrev = abbrev[:8]
+		}
+		return fmt.Errorf("pushing submodule %s commit %s: %s", submodulePath, abbrev, strings.TrimSpace(stderr.String()))
 	}
 	return nil
 }

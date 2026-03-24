@@ -18,15 +18,15 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-// validDBName matches safe database names (alphanumeric + underscore only).
-var validDBName = regexp.MustCompile(`^[a-zA-Z0-9_]+$`)
+// validDBName matches safe database names (alphanumeric, underscore, hyphen).
+var validDBName = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // DefaultDatabases is the static fallback list of known production databases.
 // Used only when SHOW DATABASES fails (server unreachable).
-// GH#2385: Removed legacy "gt" name — modern towns use "hq" (town beads) and
-// rig-specific names. The "gt" database no longer exists in most installations
-// and its presence in the fallback caused false "database not found" errors.
-var DefaultDatabases = []string{"hq", "bd"}
+// GH#2385: Removed legacy "gt" and "bd" names — modern towns use "hq" (town
+// beads) and rig-specific names. Those databases no longer exist in most
+// installations and their presence in the fallback caused phantom DB errors.
+var DefaultDatabases = []string{"hq"}
 
 // testPollutionPrefixes are database name prefixes created by tests.
 var testPollutionPrefixes = []string{"testdb_", "beads_t", "beads_pt", "doctest_"}
@@ -502,11 +502,15 @@ func purgeClosedWisps(db *sql.DB, dbName string, purgeAge time.Duration, dryRun 
 		}
 		commitMsg := fmt.Sprintf("reaper: purge %d closed wisps from %s", totalDeleted, dbName)
 		if _, err := db.ExecContext(ctx, fmt.Sprintf("CALL DOLT_COMMIT('-Am', '%s')", commitMsg)); err != nil { //nolint:gosec // G201: commitMsg from safe values
-			// Non-fatal — log but continue.
-			anomalies = append(anomalies, Anomaly{
-				Type:    "dolt_commit_failed",
-				Message: fmt.Sprintf("dolt commit after purge failed: %v", err),
-			})
+			// "nothing to commit" is expected when wisps are dolt_ignored — deletes
+			// are auto-committed by the SQL layer and Dolt has nothing to version.
+			if !isNothingToCommit(err) {
+				// Non-fatal — log but continue.
+				anomalies = append(anomalies, Anomaly{
+					Type:    "dolt_commit_failed",
+					Message: fmt.Sprintf("dolt commit after purge failed: %v", err),
+				})
+			}
 		}
 	}
 
@@ -661,10 +665,13 @@ func AutoClose(db *sql.DB, dbName string, staleAge time.Duration, dryRun bool) (
 		}
 		commitMsg := fmt.Sprintf("reaper: auto-close %d stale issues in %s", len(ids), dbName)
 		if _, err := db.ExecContext(ctx, fmt.Sprintf("CALL DOLT_COMMIT('-Am', '%s')", commitMsg)); err != nil { //nolint:gosec // G201: commitMsg from safe values
-			result.Anomalies = append(result.Anomalies, Anomaly{
-				Type:    "dolt_commit_failed",
-				Message: fmt.Sprintf("dolt commit after auto-close failed: %v", err),
-			})
+			// "nothing to commit" is expected when the updated tables are dolt_ignored.
+			if !isNothingToCommit(err) {
+				result.Anomalies = append(result.Anomalies, Anomaly{
+					Type:    "dolt_commit_failed",
+					Message: fmt.Sprintf("dolt commit after auto-close failed: %v", err),
+				})
+			}
 		}
 	}
 
@@ -813,6 +820,94 @@ func ClosePluginReceipts(db *sql.DB, dbName string, maxAge time.Duration, dryRun
 			result.Anomalies = append(result.Anomalies, Anomaly{
 				Type:    "dolt_commit_failed",
 				Message: fmt.Sprintf("dolt commit after plugin receipt close failed: %v", err),
+			})
+		}
+	}
+
+	return result, nil
+}
+
+// ClosePluginDispatches closes open dispatch mail beads created by the daemon
+// when sending plugin instructions to dogs. These beads are labeled "gt:message"
+// + "from:daemon" with a title prefix "Plugin:" and are never closed after the
+// dog completes. Without this, they accumulate at ~288/day (one per 5-minute
+// stuck-agent-dog run) and are only caught by AutoClose after 7 days.
+func ClosePluginDispatches(db *sql.DB, dbName string, maxAge time.Duration, dryRun bool) (*ClosePluginReceiptResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), DefaultQueryTimeout)
+	defer cancel()
+
+	cutoff := time.Now().UTC().Add(-maxAge)
+	result := &ClosePluginReceiptResult{Database: dbName, DryRun: dryRun}
+
+	// Find open issues with both "gt:message" and "from:daemon" labels whose
+	// title starts with "Plugin:", older than maxAge.
+	selectQuery := fmt.Sprintf(`
+		SELECT i.id FROM `+"`%s`"+`.issues i
+		INNER JOIN `+"`%s`"+`.labels l1 ON i.id = l1.issue_id
+		INNER JOIN `+"`%s`"+`.labels l2 ON i.id = l2.issue_id
+		WHERE i.status IN ('open', 'in_progress')
+		AND l1.label = 'gt:message'
+		AND l2.label = 'from:daemon'
+		AND i.title LIKE 'Plugin:%%'
+		AND i.created_at < ?`, dbName, dbName, dbName)
+
+	rows, err := db.QueryContext(ctx, selectQuery, cutoff)
+	if err != nil {
+		if isTableNotFound(err) {
+			return result, nil
+		}
+		return nil, fmt.Errorf("select plugin dispatches: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan plugin dispatch id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+
+	result.Closed = len(ids)
+	if len(ids) == 0 || dryRun {
+		return result, nil
+	}
+
+	if _, err := db.ExecContext(ctx, "SET @@autocommit = 0"); err != nil {
+		return nil, fmt.Errorf("disable autocommit: %w", err)
+	}
+	defer func() {
+		_, _ = db.ExecContext(context.Background(), "SET @@autocommit = 1")
+	}()
+
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	updateQuery := fmt.Sprintf(
+		"UPDATE `%s`.issues SET status = 'closed', closed_at = NOW() WHERE id IN (%s)",
+		dbName, strings.Join(placeholders, ","))
+	if _, err := db.ExecContext(ctx, updateQuery, args...); err != nil {
+		return nil, fmt.Errorf("close plugin dispatches: %w", err)
+	}
+
+	// Flush and commit.
+	if _, err := db.ExecContext(ctx, "COMMIT"); err != nil {
+		result.Anomalies = append(result.Anomalies, Anomaly{
+			Type:    "sql_commit_failed",
+			Message: fmt.Sprintf("sql commit after plugin dispatch close failed: %v", err),
+		})
+		return result, nil
+	}
+	commitMsg := fmt.Sprintf("reaper: close %d plugin dispatches in %s", len(ids), dbName)
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("CALL DOLT_COMMIT('-Am', '%s')", commitMsg)); err != nil { //nolint:gosec // G201: commitMsg from safe values
+		if !isNothingToCommit(err) {
+			result.Anomalies = append(result.Anomalies, Anomaly{
+				Type:    "dolt_commit_failed",
+				Message: fmt.Sprintf("dolt commit after plugin dispatch close failed: %v", err),
 			})
 		}
 	}

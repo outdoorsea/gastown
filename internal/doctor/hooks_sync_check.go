@@ -1,18 +1,32 @@
 package doctor
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/hooks"
 )
 
-// HooksSyncCheck verifies all settings.json files match what gt hooks sync would generate.
+// templateTarget tracks a non-Claude template-based agent file that is out of sync.
+type templateTarget struct {
+	path           string
+	dir            string
+	provider       string
+	role           string
+	hooksDir       string
+	settingsFile   string
+	useSettingsDir bool
+}
+
+// HooksSyncCheck verifies all hook/settings files match what gt hooks sync would generate.
 type HooksSyncCheck struct {
 	FixableCheck
-	outOfSync []hooks.Target
+	outOfSync         []hooks.Target   // Claude targets
+	templateOutOfSync []templateTarget // Non-Claude template-based targets
 }
 
 // NewHooksSyncCheck creates a new hooks sync validation check.
@@ -28,10 +42,15 @@ func NewHooksSyncCheck() *HooksSyncCheck {
 	}
 }
 
-// Run checks all managed settings.json files for sync status.
+// Run checks all managed hook/settings files for sync status.
 func (c *HooksSyncCheck) Run(ctx *CheckContext) *CheckResult {
 	c.outOfSync = nil
+	c.templateOutOfSync = nil
 
+	var details []string
+	totalTargets := 0
+
+	// Loop 1: Claude targets — use base+override merge system via DiscoverTargets.
 	targets, err := hooks.DiscoverTargets(ctx.TownRoot)
 	if err != nil {
 		return &CheckResult{
@@ -42,8 +61,9 @@ func (c *HooksSyncCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	var details []string
 	for _, target := range targets {
+		totalTargets++
+
 		expected, err := hooks.ComputeExpected(target.Key)
 		if err != nil {
 			details = append(details, fmt.Sprintf("%s: error computing expected: %v", target.DisplayKey(), err))
@@ -56,7 +76,6 @@ func (c *HooksSyncCheck) Run(ctx *CheckContext) *CheckResult {
 			continue
 		}
 
-		// Check if file exists
 		_, statErr := os.Stat(target.Path)
 		fileExists := statErr == nil
 
@@ -70,11 +89,83 @@ func (c *HooksSyncCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 	}
 
-	if len(c.outOfSync) == 0 {
+	// Loop 2: Non-Claude template-based agents — use DiscoverRoleLocations + SyncForRole comparison.
+	locations, locErr := hooks.DiscoverRoleLocations(ctx.TownRoot)
+	if locErr != nil {
+		details = append(details, fmt.Sprintf("discovering role locations: %v", locErr))
+	} else {
+		for _, loc := range locations {
+			rigPath := ""
+			if loc.Rig != "" {
+				rigPath = filepath.Join(ctx.TownRoot, loc.Rig)
+			}
+			rc := config.ResolveRoleAgentConfig(loc.Role, ctx.TownRoot, rigPath)
+			if rc == nil || rc.Hooks == nil || rc.Hooks.Provider == "" {
+				continue
+			}
+			// Claude targets are handled by Loop 1.
+			if rc.Hooks.Provider == "claude" {
+				continue
+			}
+
+			preset := config.GetAgentPresetByName(rc.Hooks.Provider)
+			useSettingsDir := preset != nil && preset.HooksUseSettingsDir
+
+			var checkDirs []string
+			if loc.Rig == "" || useSettingsDir {
+				checkDirs = []string{loc.Dir}
+			} else {
+				checkDirs = hooks.DiscoverWorktrees(loc.Dir)
+			}
+
+			for _, dir := range checkDirs {
+				totalTargets++
+				targetPath := filepath.Join(dir, rc.Hooks.Dir, rc.Hooks.SettingsFile)
+
+				expected, err := hooks.ComputeExpectedTemplate(rc.Hooks.Provider, rc.Hooks.SettingsFile, loc.Role)
+				if err != nil {
+					details = append(details, fmt.Sprintf("%s (%s): error computing template: %v", targetPath, rc.Hooks.Provider, err))
+					continue
+				}
+
+				actual, readErr := os.ReadFile(targetPath)
+				if readErr != nil {
+					// File missing
+					c.templateOutOfSync = append(c.templateOutOfSync, templateTarget{
+						path: targetPath, dir: dir, provider: rc.Hooks.Provider,
+						role: loc.Role, hooksDir: rc.Hooks.Dir,
+						settingsFile: rc.Hooks.SettingsFile, useSettingsDir: useSettingsDir,
+					})
+					details = append(details, fmt.Sprintf("%s (%s): missing", targetPath, rc.Hooks.Provider))
+					continue
+				}
+
+				// Compare: structural for JSON, byte-exact for other files.
+				inSync := false
+				if filepath.Ext(rc.Hooks.SettingsFile) == ".json" {
+					inSync = hooks.TemplateContentEqual(expected, actual)
+				} else {
+					inSync = bytes.Equal(expected, actual)
+				}
+
+				if !inSync {
+					c.templateOutOfSync = append(c.templateOutOfSync, templateTarget{
+						path: targetPath, dir: dir, provider: rc.Hooks.Provider,
+						role: loc.Role, hooksDir: rc.Hooks.Dir,
+						settingsFile: rc.Hooks.SettingsFile, useSettingsDir: useSettingsDir,
+					})
+					details = append(details, fmt.Sprintf("%s (%s): out of sync", targetPath, rc.Hooks.Provider))
+				}
+			}
+		}
+	}
+
+	outOfSyncCount := len(c.outOfSync) + len(c.templateOutOfSync)
+	if outOfSyncCount == 0 {
 		return &CheckResult{
 			Name:     c.Name(),
 			Status:   StatusOK,
-			Message:  fmt.Sprintf("All %d hook targets in sync", len(targets)),
+			Message:  fmt.Sprintf("All %d hook targets in sync", totalTargets),
 			Category: c.Category(),
 		}
 	}
@@ -82,20 +173,22 @@ func (c *HooksSyncCheck) Run(ctx *CheckContext) *CheckResult {
 	return &CheckResult{
 		Name:     c.Name(),
 		Status:   StatusWarning,
-		Message:  fmt.Sprintf("%d target(s) out of sync", len(c.outOfSync)),
+		Message:  fmt.Sprintf("%d target(s) out of sync", outOfSyncCount),
 		Details:  details,
-		FixHint:  "Run 'gt hooks sync' to regenerate settings.json files",
+		FixHint:  "Run 'gt doctor --fix hooks-sync' to regenerate settings files",
 		Category: c.Category(),
 	}
 }
 
-// Fix runs gt hooks sync to bring all targets into sync.
+// Fix brings all out-of-sync targets back into sync.
 func (c *HooksSyncCheck) Fix(ctx *CheckContext) error {
-	if len(c.outOfSync) == 0 {
+	if len(c.outOfSync) == 0 && len(c.templateOutOfSync) == 0 {
 		return nil
 	}
 
 	var errs []string
+
+	// Fix Claude targets via merge system.
 	for _, target := range c.outOfSync {
 		expected, err := hooks.ComputeExpected(target.Key)
 		if err != nil {
@@ -132,6 +225,15 @@ func (c *HooksSyncCheck) Fix(ctx *CheckContext) error {
 		if err := os.WriteFile(target.Path, data, 0644); err != nil {
 			errs = append(errs, fmt.Sprintf("%s: write: %v", target.DisplayKey(), err))
 			continue
+		}
+	}
+
+	// Fix template-based targets via SyncForRole.
+	for _, tt := range c.templateOutOfSync {
+		_, err := hooks.SyncForRole(tt.provider, tt.dir, tt.dir, tt.role,
+			tt.hooksDir, tt.settingsFile, tt.useSettingsDir)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", tt.path, err))
 		}
 	}
 

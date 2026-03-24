@@ -637,6 +637,9 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Auto-assign a namepool theme that doesn't collide with other rigs (gas-21k).
+	autoAssignNamepoolTheme(townRoot, name, mgr)
+
 	// Sync hooks for the new rig's targets
 	if err := syncRigHooks(townRoot, name); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to sync hooks for new rig: %v\n", err)
@@ -688,20 +691,23 @@ func runRigAdd(cmd *cobra.Command, args []string) error {
 //   - 🅿️ = parked (intentionally paused)
 //   - 🛑 = docked (global shutdown)
 func GetRigLED(hasWitness, hasRefinery bool, opState string) string {
+	// Check operational state FIRST — parked/docked overrides session state.
+	// Sessions may still be running during the race window after park/dock
+	// but before sessions are killed (GH#2555).
+	switch opState {
+	case "PARKED":
+		return "🅿️"
+	case "DOCKED":
+		return "🛑"
+	}
+
 	if hasWitness && hasRefinery {
 		return "🟢"
 	}
 	if hasWitness || hasRefinery {
 		return "🟡"
 	}
-	switch opState {
-	case "PARKED":
-		return "🅿️"
-	case "DOCKED":
-		return "🛑"
-	default:
-		return "⚫"
-	}
+	return "⚫"
 }
 
 // rigStatePriority returns a sort priority for a rig's state.
@@ -1225,7 +1231,7 @@ func runRigAdopt(_ *cobra.Command, args []string) error {
 					}
 				}
 				// Fallback: extract prefix from dolt_database name in metadata.json.
-				// Format: "beads_<prefix>" (e.g. "beads_my-project" → "my-project").
+				// Format: "beads_<prefix>" (e.g. "beads_my_project" → "my_project").
 				// This survives clone because metadata.json is tracked by git.
 				if !prefixDetected {
 					var fullMeta struct {
@@ -1351,6 +1357,9 @@ func runRigAdopt(_ *cobra.Command, args []string) error {
 			}
 		}
 	}
+
+	// Auto-assign a namepool theme that doesn't collide with other rigs (gas-21k).
+	autoAssignNamepoolTheme(townRoot, name, mgr)
 
 	// Print results
 	fmt.Printf("\n%s Rig %s adopted\n", style.Success.Render("✓"), name)
@@ -1944,12 +1953,15 @@ func runRigStatus(cmd *cobra.Command, args []string) error {
 			// Reconcile display state with tmux session liveness.
 			// Per gt-zecmc design: tmux is ground truth for observable states.
 			// If session is running but beads says done, the polecat is still alive.
-			// If session is dead but beads says working, the polecat is actually done.
+			// If session is dead but beads says working, show "stalled" so the
+			// witness can detect unsubmitted work (gt-3071b). Previously this
+			// showed "done" which masked failures where polecats died before
+			// running gt done, leaving work stranded in worktrees.
 			displayState := p.State
 			if hasSession && displayState == polecat.StateDone {
 				displayState = polecat.StateWorking
 			} else if !hasSession && displayState == polecat.StateWorking {
-				displayState = polecat.StateDone
+				displayState = polecat.State("stalled")
 			}
 
 			stateStr := string(displayState)
@@ -2437,4 +2449,37 @@ func isGitRemoteURL(s string) bool {
 		return true
 	}
 	return false
+}
+
+// autoAssignNamepoolTheme picks a namepool theme for a new rig that doesn't collide
+// with themes already in use by other rigs. This ensures polecat names are unique
+// across rigs (gas-21k). If all built-in themes are taken, falls back to hash-based
+// selection where collisions are possible but unavoidable.
+func autoAssignNamepoolTheme(townRoot, rigName string, mgr *rig.Manager) {
+	usedThemes := mgr.UsedNamepoolThemes(polecat.ThemeForRig)
+	chosenTheme := polecat.ThemeForRigAvoiding(rigName, usedThemes)
+	settingsPath := filepath.Join(townRoot, rigName, "settings", "config.json")
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		fmt.Printf("  %s Could not create settings directory: %v\n", style.Warning.Render("!"), err)
+		return
+	}
+	rigSettings, err := config.LoadRigSettings(settingsPath)
+	if err != nil {
+		rigSettings = &config.RigSettings{
+			Type:    "rig-settings",
+			Version: 1,
+		}
+	}
+	// Only set namepool theme if not already configured
+	if rigSettings.Namepool != nil && rigSettings.Namepool.Style != "" {
+		return
+	}
+	rigSettings.Namepool = &config.NamepoolConfig{
+		Style: chosenTheme,
+	}
+	if err := config.SaveRigSettings(settingsPath, rigSettings); err != nil {
+		fmt.Printf("  %s Could not save namepool theme: %v\n", style.Warning.Render("!"), err)
+	} else {
+		fmt.Printf("  Namepool theme: %s (auto-assigned for cross-rig uniqueness)\n", chosenTheme)
+	}
 }
