@@ -97,6 +97,81 @@ func TestReadNonExistent(t *testing.T) {
 	}
 }
 
+func TestPerRigActivateAndRead(t *testing.T) {
+	townRoot := t.TempDir()
+
+	if IsRigActive(townRoot, "gastown") {
+		t.Fatal("rig should not be active before activation")
+	}
+
+	if err := ActivateRig(townRoot, "gastown", TriggerManual, "closing laptop"); err != nil {
+		t.Fatalf("ActivateRig: %v", err)
+	}
+
+	if !IsRigActive(townRoot, "gastown") {
+		t.Fatal("gastown should be active after activation")
+	}
+	if IsRigActive(townRoot, "beads") {
+		t.Fatal("beads should not be active")
+	}
+	// Town-wide should not be active
+	if IsActive(townRoot) {
+		t.Fatal("town-wide should not be active from per-rig activation")
+	}
+
+	info := ReadRig(townRoot, "gastown")
+	if info == nil {
+		t.Fatal("ReadRig returned nil")
+	}
+	if info.Reason != "closing laptop" {
+		t.Errorf("reason = %q, want %q", info.Reason, "closing laptop")
+	}
+}
+
+func TestIsAnyActive(t *testing.T) {
+	townRoot := t.TempDir()
+
+	if IsAnyActive(townRoot, "gastown") {
+		t.Fatal("nothing should be active")
+	}
+
+	// Per-rig activation
+	if err := ActivateRig(townRoot, "gastown", TriggerManual, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !IsAnyActive(townRoot, "gastown") {
+		t.Fatal("gastown should be active via per-rig")
+	}
+	if IsAnyActive(townRoot, "beads") {
+		t.Fatal("beads should not be affected by gastown per-rig")
+	}
+
+	// Clean up and test town-wide
+	_ = DeactivateRig(townRoot, "gastown")
+	if err := Activate(townRoot, TriggerManual, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !IsAnyActive(townRoot, "gastown") {
+		t.Fatal("gastown should be active via town-wide")
+	}
+	if !IsAnyActive(townRoot, "beads") {
+		t.Fatal("beads should be active via town-wide")
+	}
+}
+
+func TestPerRigDeactivate(t *testing.T) {
+	townRoot := t.TempDir()
+	if err := ActivateRig(townRoot, "gastown", TriggerManual, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := DeactivateRig(townRoot, "gastown"); err != nil {
+		t.Fatal(err)
+	}
+	if IsRigActive(townRoot, "gastown") {
+		t.Fatal("gastown should not be active after deactivation")
+	}
+}
+
 func TestParseBareFile(t *testing.T) {
 	townRoot := t.TempDir()
 	// Simulate a bare touch (no content)

@@ -74,6 +74,52 @@ func Deactivate(townRoot string, onlyAuto bool) error {
 	return err
 }
 
+// RigFileName returns the sentinel file name for a per-rig E-stop.
+func RigFileName(rigName string) string {
+	return fmt.Sprintf("ESTOP.%s", rigName)
+}
+
+// RigFilePath returns the full path to a per-rig ESTOP sentinel file.
+func RigFilePath(townRoot, rigName string) string {
+	return filepath.Join(townRoot, RigFileName(rigName))
+}
+
+// IsRigActive checks whether a per-rig E-stop is active.
+func IsRigActive(townRoot, rigName string) bool {
+	_, err := os.Stat(RigFilePath(townRoot, rigName))
+	return err == nil
+}
+
+// ReadRig reads and parses a per-rig ESTOP file. Returns nil if not active.
+func ReadRig(townRoot, rigName string) *Info {
+	data, err := os.ReadFile(RigFilePath(townRoot, rigName))
+	if err != nil {
+		return nil
+	}
+	return parse(string(data))
+}
+
+// ActivateRig creates a per-rig ESTOP sentinel file.
+func ActivateRig(townRoot, rigName, trigger, reason string) error {
+	ts := time.Now().Format(time.RFC3339)
+	content := fmt.Sprintf("%s\t%s\t%s\n", trigger, ts, reason)
+	return os.WriteFile(RigFilePath(townRoot, rigName), []byte(content), 0644)
+}
+
+// DeactivateRig removes a per-rig ESTOP sentinel file.
+func DeactivateRig(townRoot, rigName string) error {
+	err := os.Remove(RigFilePath(townRoot, rigName))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	return err
+}
+
+// IsAnyActive checks if a town-wide or rig-specific E-stop affects this rig.
+func IsAnyActive(townRoot, rigName string) bool {
+	return IsActive(townRoot) || IsRigActive(townRoot, rigName)
+}
+
 func parse(content string) *Info {
 	content = strings.TrimSpace(content)
 	if content == "" {
