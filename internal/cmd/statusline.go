@@ -40,13 +40,27 @@ func init() {
 
 func runStatusLine(cmd *cobra.Command, args []string) error {
 	// Check E-stop first — prepend red indicator if active
-	if townRoot, err := workspace.FindFromCwd(); err == nil && estop.IsActive(townRoot) {
-		info := estop.Read(townRoot)
-		ts := ""
-		if info != nil && !info.Timestamp.IsZero() {
-			ts = info.Timestamp.Format("15:04")
+	if townRoot, twErr := workspace.FindFromCwd(); twErr == nil {
+		showEstop := false
+		var info *estop.Info
+		if estop.IsActive(townRoot) {
+			showEstop = true
+			info = estop.Read(townRoot)
+		} else {
+			// Check per-rig E-stop
+			rigEnv := os.Getenv("GT_RIG")
+			if rigEnv != "" && estop.IsRigActive(townRoot, rigEnv) {
+				showEstop = true
+				info = estop.ReadRig(townRoot, rigEnv)
+			}
 		}
-		fmt.Printf("#[bg=red,fg=white,bold] ESTOP %s #[default] ", ts)
+		if showEstop {
+			ts := ""
+			if info != nil && !info.Timestamp.IsZero() {
+				ts = info.Timestamp.Format("15:04")
+			}
+			fmt.Printf("#[bg=red,fg=white,bold] ESTOP %s #[default] ", ts)
+		}
 	}
 
 	t := tmux.NewTmux()
