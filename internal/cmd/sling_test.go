@@ -1190,6 +1190,21 @@ func TestLooksLikeBeadID(t *testing.T) {
 		{"123-abc", false},      // numeric prefix
 		{"a-", false},           // nothing after hyphen
 		{"aaaaaa-b", false},     // prefix too long (6 chars)
+
+		// Injection / invalid suffix characters - should return false
+		{"gt-abc;rm -rf /", false},       // shell injection in suffix
+		{"gt-abc$(cmd)", false},          // command substitution in suffix
+		{"gt-abc&bg", false},            // ampersand in suffix
+		{"gt-abc|pipe", false},          // pipe in suffix
+		{"gt-abc`tick`", false},         // backtick in suffix
+		{"gt-abc>redir", false},         // redirect in suffix
+		{"gt-abc<redir", false},         // redirect in suffix
+		{"gt-abc'quote", false},         // single quote in suffix
+		{"gt-abc\"dquote", false},       // double quote in suffix
+		{"gt-abc\\slash", false},        // backslash in suffix
+		{"gt-abc xyz", false},           // space in suffix
+		{"gt-ABC", false},              // uppercase in suffix
+		{"gt-abc/path", false},          // slash in suffix
 	}
 
 	for _, tt := range tests {
@@ -1709,7 +1724,8 @@ exit /b 0
 		t.Fatalf("read bd log: %v", err)
 	}
 
-	// Verify that ALL bd commands received BD_DOLT_AUTO_COMMIT=off
+	// Verify that all bd commands received BD_DOLT_AUTO_COMMIT=off.
+	// Since dc1d11db, hook writes no longer use WithAutoCommit().
 	logLines := strings.Split(strings.TrimSpace(string(logBytes)), "\n")
 	if len(logLines) == 0 {
 		t.Fatal("no bd commands logged")
@@ -1717,11 +1733,6 @@ exit /b 0
 
 	for _, line := range logLines {
 		if line == "" {
-			continue
-		}
-		// Commands using .WithAutoCommit() (e.g., "update --status=hooked")
-		// legitimately override to "on" for sequential consistency.
-		if strings.Contains(line, "update") && strings.Contains(line, "--status=hooked") {
 			continue
 		}
 		if !strings.Contains(line, "ENV:BD_DOLT_AUTO_COMMIT=off|") {

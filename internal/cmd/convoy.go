@@ -201,7 +201,9 @@ COMMANDS:
   close     Close a convoy (verifies all items done, or use --force)
   land      Land an owned convoy (cleanup worktrees, close convoy)
   status    Show convoy progress, tracked issues, and active workers
-  list      List convoys (the dashboard view)`,
+  list      List convoys (the dashboard view)
+  watch     Subscribe to convoy completion notifications
+  unwatch   Unsubscribe from convoy completion notifications`,
 }
 
 var convoyCreateCmd = &cobra.Command{
@@ -370,6 +372,34 @@ Examples:
 	RunE:         runConvoyLand,
 }
 
+var (
+	convoyGCJSON bool
+)
+
+var convoyGCCmd = &cobra.Command{
+	Use:   "gc <convoy-id>",
+	Short: "GC convoy legs with idle/done assignee polecats",
+	Long: `Garbage-collect convoy legs whose assignee polecat is idle, stuck, or nuked.
+
+When a polecat goes idle (via gt done) or gets stuck without properly closing
+its convoy leg bead, the convoy gets stuck: tracked issues exist but none are
+ready. This command finds and closes those legs so the convoy can progress.
+
+For each open tracked bead in the convoy:
+  1. Look up the assignee (e.g., gastown/polecats/dag)
+  2. Resolve to agent bead ID (e.g., gt-gastown-polecat-dag)
+  3. If agent_state is idle, stuck, or nuked → close the leg
+
+Returns count of legs closed (0 if all assignees are still active).
+
+Examples:
+  gt convoy gc hq-cv-abc              # GC idle legs in a convoy
+  gt convoy gc hq-cv-abc --json       # Machine-readable output`,
+	Args:         cobra.ExactArgs(1),
+	SilenceUsage: true,
+	RunE:         runConvoyGC,
+}
+
 func init() {
 	// Create flags
 	convoyCreateCmd.Flags().StringVar(&convoyMolecule, "molecule", "", "Associated molecule ID")
@@ -409,6 +439,9 @@ func init() {
 	convoyLandCmd.Flags().BoolVar(&convoyLandKeep, "keep-worktrees", false, "Skip worktree cleanup")
 	convoyLandCmd.Flags().BoolVar(&convoyLandDryRun, "dry-run", false, "Show what would happen without acting")
 
+	// GC flags
+	convoyGCCmd.Flags().BoolVar(&convoyGCJSON, "json", false, "Output as JSON")
+
 	// Add subcommands
 	convoyCmd.AddCommand(convoyCreateCmd)
 	convoyCmd.AddCommand(convoyStatusCmd)
@@ -420,6 +453,7 @@ func init() {
 	convoyCmd.AddCommand(convoyLandCmd)
 	convoyCmd.AddCommand(convoyStageCmd)
 	convoyCmd.AddCommand(convoyLaunchCmd)
+	convoyCmd.AddCommand(convoyGCCmd)
 
 	rootCmd.AddCommand(convoyCmd)
 }
@@ -998,6 +1032,38 @@ func checkSingleConvoy(townBeads, convoyID string, dryRun bool) error {
 
 	_, err = closeConvoyIfComplete(townBeads, convoyID, convoy.Title, tracked, dryRun)
 	return err
+}
+
+func runConvoyGC(cmd *cobra.Command, args []string) error {
+	convoyID := args[0]
+
+	townRoot, err := workspace.FindFromCwdOrError()
+	if err != nil {
+		return fmt.Errorf("not in a Gas Town workspace: %w", err)
+	}
+
+	ctx := cmd.Context()
+	logger := func(format string, args ...interface{}) {
+		if !convoyGCJSON {
+			fmt.Fprintf(os.Stderr, format+"\n", args...)
+		}
+	}
+
+	result := convoyops.GCIdleAssigneeLegs(ctx, townRoot, convoyID, "gc", logger)
+
+	if convoyGCJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(result)
+	}
+
+	if result.LegsClosed == 0 {
+		fmt.Printf("%s Convoy %s: no idle-assignee legs to GC\n", style.Dim.Render("○"), convoyID)
+	} else {
+		fmt.Printf("%s Convoy %s: closed %d idle-assignee leg(s)\n", style.Bold.Render("✓"), convoyID, result.LegsClosed)
+	}
+
+	return nil
 }
 
 func runConvoyClose(cmd *cobra.Command, args []string) error {
@@ -1727,6 +1793,15 @@ func notifyConvoyCompletion(townBeads, convoyID, title string) {
 		mailCmd := exec.Command("gt", mailArgs...)
 		if err := mailCmd.Run(); err != nil {
 			style.PrintWarning("could not notify %s: %v", addr, err)
+		}
+	}
+
+	// Send nudge notifications to nudge watchers
+	for _, addr := range fields.NudgeNotificationAddresses() {
+		nudgeMsg := fmt.Sprintf("🚚 Convoy landed: %s — Convoy %s has completed. All tracked issues are now closed.", title, convoyID)
+		nudgeCmd := exec.Command("gt", "nudge", addr, "-m", nudgeMsg)
+		if err := nudgeCmd.Run(); err != nil {
+			style.PrintWarning("could not nudge %s: %v", addr, err)
 		}
 	}
 

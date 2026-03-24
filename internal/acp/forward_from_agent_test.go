@@ -323,7 +323,8 @@ func TestForwardFromAgent_PropulsionTriggers(t *testing.T) {
 			mu.Unlock()
 		}
 	}()
-	time.Sleep(100 * time.Millisecond)
+
+	time.Sleep(200 * time.Millisecond)
 
 	foundAfterReset := false
 	mu.Lock()

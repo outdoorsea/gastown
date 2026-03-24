@@ -27,6 +27,7 @@ import (
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/feed"
 	gitpkg "github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/estop"
 	"github.com/steveyegge/gastown/internal/mayor"
 	"github.com/steveyegge/gastown/internal/polecat"
 	"github.com/steveyegge/gastown/internal/refinery"
@@ -55,6 +56,11 @@ type Daemon struct {
 	beadsStores   map[string]beadsdk.Storage
 	doltServer *DoltServerManager
 	krcPruner  *KRCPruner
+
+	// disabledPatrols is loaded from town settings (disabled_patrols field).
+	// Provides a simple way to disable individual patrol dogs without editing
+	// mayor/daemon.json. Checked by isPatrolActive alongside patrolConfig.
+	disabledPatrols map[string]bool
 
 	// Mass death detection: track recent session deaths
 	deathsMu     sync.Mutex
@@ -99,6 +105,19 @@ type Daemon struct {
 	// lastMaintenanceRun tracks when scheduled maintenance last ran.
 	// Only accessed from heartbeat loop goroutine - no sync needed.
 	lastMaintenanceRun time.Time
+
+	// mayorZombieCount tracks consecutive patrol cycles where the Mayor tmux
+	// session exists but the agent process is not detected. A count >= 3
+	// triggers a zombie restart, debouncing transient gaps during handoffs.
+	// Only accessed from heartbeat loop goroutine - no sync needed.
+	mayorZombieCount int
+
+	// doltFailureCount tracks consecutive heartbeats where Dolt is unreachable.
+	// When this exceeds estopDoltFailureThreshold, an automatic E-stop is triggered.
+	// Only accessed from heartbeat loop goroutine - no sync needed.
+	doltFailureCount int
+	// doltFirstFailure records when the current failure streak started.
+	doltFirstFailure time.Time
 }
 
 // sessionDeath records a detected session death for mass death analysis.
@@ -167,6 +186,17 @@ func New(config *Config) (*Daemon, error) {
 			os.Setenv(k, v)
 			logger.Printf("Set env %s=%s from daemon.json", k, v)
 		}
+	}
+
+	// Load disabled_patrols from town settings (settings/config.json).
+	// This provides a simpler way to disable patrols than editing daemon.json.
+	disabledPatrols := loadDisabledPatrolsFromTownSettings(config.TownRoot)
+	if len(disabledPatrols) > 0 {
+		names := make([]string, 0, len(disabledPatrols))
+		for k := range disabledPatrols {
+			names = append(names, k)
+		}
+		logger.Printf("Patrols disabled via town settings: %v", names)
 	}
 
 	// Initialize Dolt server manager if configured
@@ -261,18 +291,19 @@ func New(config *Config) (*Daemon, error) {
 	}
 
 	return &Daemon{
-		config:         config,
-		patrolConfig:   patrolConfig,
-		tmux:           tmux.NewTmux(),
-		logger:         logger,
-		ctx:            ctx,
-		cancel:         cancel,
-		doltServer:     doltServer,
-		gtPath:         gtPath,
-		bdPath:         bdPath,
-		restartTracker: restartTracker,
-		otelProvider:   otelProvider,
-		metrics:        dm,
+		config:          config,
+		patrolConfig:    patrolConfig,
+		disabledPatrols: disabledPatrols,
+		tmux:            tmux.NewTmux(),
+		logger:          logger,
+		ctx:             ctx,
+		cancel:          cancel,
+		doltServer:      doltServer,
+		gtPath:          gtPath,
+		bdPath:          bdPath,
+		restartTracker:  restartTracker,
+		otelProvider:    otelProvider,
+		metrics:         dm,
 	}, nil
 }
 
@@ -406,7 +437,7 @@ func (d *Daemon) Run() error {
 	// to periodically push databases to their git remotes.
 	var doltRemotesTicker *time.Ticker
 	var doltRemotesChan <-chan time.Time
-	if IsPatrolEnabled(d.patrolConfig, "dolt_remotes") {
+	if d.isPatrolActive("dolt_remotes") {
 		interval := doltRemotesInterval(d.patrolConfig)
 		doltRemotesTicker = time.NewTicker(interval)
 		doltRemotesChan = doltRemotesTicker.C
@@ -418,7 +449,7 @@ func (d *Daemon) Run() error {
 	// Runs filesystem backup sync (dolt backup sync) for production databases.
 	var doltBackupTicker *time.Ticker
 	var doltBackupChan <-chan time.Time
-	if IsPatrolEnabled(d.patrolConfig, "dolt_backup") {
+	if d.isPatrolActive("dolt_backup") {
 		interval := doltBackupInterval(d.patrolConfig)
 		doltBackupTicker = time.NewTicker(interval)
 		doltBackupChan = doltBackupTicker.C
@@ -430,7 +461,7 @@ func (d *Daemon) Run() error {
 	// Exports issues to JSONL, scrubs ephemeral data, pushes to git repo.
 	var jsonlGitBackupTicker *time.Ticker
 	var jsonlGitBackupChan <-chan time.Time
-	if IsPatrolEnabled(d.patrolConfig, "jsonl_git_backup") {
+	if d.isPatrolActive("jsonl_git_backup") {
 		interval := jsonlGitBackupInterval(d.patrolConfig)
 		jsonlGitBackupTicker = time.NewTicker(interval)
 		jsonlGitBackupChan = jsonlGitBackupTicker.C
@@ -442,7 +473,7 @@ func (d *Daemon) Run() error {
 	// Closes stale wisps (abandoned molecule steps, old patrol data) across all databases.
 	var wispReaperTicker *time.Ticker
 	var wispReaperChan <-chan time.Time
-	if IsPatrolEnabled(d.patrolConfig, "wisp_reaper") {
+	if d.isPatrolActive("wisp_reaper") {
 		interval := wispReaperInterval(d.patrolConfig)
 		wispReaperTicker = time.NewTicker(interval)
 		wispReaperChan = wispReaperTicker.C
@@ -454,7 +485,7 @@ func (d *Daemon) Run() error {
 	// Health monitor: TCP check, latency, DB count, gc, zombie detection, backup/disk checks.
 	var doctorDogTicker *time.Ticker
 	var doctorDogChan <-chan time.Time
-	if IsPatrolEnabled(d.patrolConfig, "doctor_dog") {
+	if d.isPatrolActive("doctor_dog") {
 		interval := doctorDogInterval(d.patrolConfig)
 		doctorDogTicker = time.NewTicker(interval)
 		doctorDogChan = doctorDogTicker.C
@@ -466,7 +497,7 @@ func (d *Daemon) Run() error {
 	// Flattens Dolt commit history to reclaim graph storage (daily).
 	var compactorDogTicker *time.Ticker
 	var compactorDogChan <-chan time.Time
-	if IsPatrolEnabled(d.patrolConfig, "compactor_dog") {
+	if d.isPatrolActive("compactor_dog") {
 		interval := compactorDogInterval(d.patrolConfig)
 		compactorDogTicker = time.NewTicker(interval)
 		compactorDogChan = compactorDogTicker.C
@@ -478,7 +509,7 @@ func (d *Daemon) Run() error {
 	// Auto-commits WIP changes in active polecat worktrees to prevent data loss.
 	var checkpointDogTicker *time.Ticker
 	var checkpointDogChan <-chan time.Time
-	if IsPatrolEnabled(d.patrolConfig, "checkpoint_dog") {
+	if d.isPatrolActive("checkpoint_dog") {
 		interval := checkpointDogInterval(d.patrolConfig)
 		checkpointDogTicker = time.NewTicker(interval)
 		checkpointDogChan = checkpointDogTicker.C
@@ -491,7 +522,7 @@ func (d *Daemon) Run() error {
 	// runs `gt maintain --force` when commit counts exceed threshold.
 	var scheduledMaintenanceTicker *time.Ticker
 	var scheduledMaintenanceChan <-chan time.Time
-	if IsPatrolEnabled(d.patrolConfig, "scheduled_maintenance") {
+	if d.isPatrolActive("scheduled_maintenance") {
 		interval := maintenanceCheckInterval(d.patrolConfig)
 		scheduledMaintenanceTicker = time.NewTicker(interval)
 		scheduledMaintenanceChan = scheduledMaintenanceTicker.C
@@ -504,7 +535,7 @@ func (d *Daemon) Run() error {
 	// Periodically runs quality gates on each rig's main branch to catch regressions.
 	var mainBranchTestTicker *time.Ticker
 	var mainBranchTestChan <-chan time.Time
-	if IsPatrolEnabled(d.patrolConfig, "main_branch_test") {
+	if d.isPatrolActive("main_branch_test") {
 		interval := mainBranchTestInterval(d.patrolConfig)
 		mainBranchTestTicker = time.NewTicker(interval)
 		mainBranchTestChan = mainBranchTestTicker.C
@@ -646,6 +677,15 @@ func (d *Daemon) heartbeat(state *State) {
 		return
 	}
 
+	// Skip agent management if E-stop is active.
+	// The daemon stays alive (to run recovery probes later) but does NOT
+	// restart any agents. This prevents fighting the E-stop by auto-spawning
+	// sessions that were intentionally frozen.
+	if estop.IsActive(d.config.TownRoot) {
+		d.logger.Println("E-STOP active, skipping agent management")
+		return
+	}
+
 	d.metrics.recordHeartbeat(d.ctx)
 	d.logger.Println("Heartbeat starting (recovery-focused)")
 
@@ -665,7 +705,7 @@ func (d *Daemon) heartbeat(state *State) {
 
 	// 1. Ensure Deacon is running (restart if dead)
 	// Check patrol config - can be disabled in mayor/daemon.json
-	if IsPatrolEnabled(d.patrolConfig, "deacon") {
+	if d.isPatrolActive("deacon") {
 		d.ensureDeaconRunning()
 	} else {
 		d.logger.Printf("Deacon patrol disabled in config, skipping")
@@ -678,20 +718,20 @@ func (d *Daemon) heartbeat(state *State) {
 	// 2. Poke Boot for intelligent triage (stuck/nudge/interrupt)
 	// Boot handles nuanced "is Deacon responsive" decisions
 	// Only run if Deacon patrol is enabled
-	if IsPatrolEnabled(d.patrolConfig, "deacon") {
+	if d.isPatrolActive("deacon") {
 		d.ensureBootRunning()
 	}
 
 	// 3. Direct Deacon heartbeat check (belt-and-suspenders)
 	// Boot may not detect all stuck states; this provides a fallback
 	// Only run if Deacon patrol is enabled
-	if IsPatrolEnabled(d.patrolConfig, "deacon") {
+	if d.isPatrolActive("deacon") {
 		d.checkDeaconHeartbeat()
 	}
 
 	// 4. Ensure Witnesses are running for all rigs (restart if dead)
 	// Check patrol config - can be disabled in mayor/daemon.json
-	if IsPatrolEnabled(d.patrolConfig, "witness") {
+	if d.isPatrolActive("witness") {
 		d.ensureWitnessesRunning()
 	} else {
 		d.logger.Printf("Witness patrol disabled in config, skipping")
@@ -702,7 +742,7 @@ func (d *Daemon) heartbeat(state *State) {
 	// 5. Ensure Refineries are running for all rigs (restart if dead)
 	// Check patrol config - can be disabled in mayor/daemon.json
 	// Pressure-gated: refineries consume API credits, defer when system is loaded.
-	if IsPatrolEnabled(d.patrolConfig, "refinery") {
+	if d.isPatrolActive("refinery") {
 		if p := d.checkPressure("refinery"); !p.OK {
 			d.logger.Printf("Deferring refinery spawn: %s", p.Reason)
 		} else {
@@ -719,7 +759,7 @@ func (d *Daemon) heartbeat(state *State) {
 
 	// 6.5. Handle Dog lifecycle: cleanup stuck dogs and dispatch plugins
 	// Pressure-gated: dog dispatch spawns new agent sessions.
-	if IsPatrolEnabled(d.patrolConfig, "handler") {
+	if d.isPatrolActive("handler") {
 		if p := d.checkPressure("dog"); !p.OK {
 			d.logger.Printf("Deferring dog dispatch: %s", p.Reason)
 			// Still run cleanup phases (stuck/stale/idle) — only skip dispatch
@@ -802,6 +842,11 @@ func (d *Daemon) rotateOversizedLogs() {
 // This provides the backend for beads database access in server mode.
 // Option B throttling: pours a mol-dog-doctor molecule only when health check
 // warnings are detected, with a 5-minute cooldown to avoid wisp spam.
+// estopDoltFailureThreshold is the number of consecutive heartbeats with Dolt
+// unreachable before auto-triggering an E-stop. At 30s heartbeat interval,
+// 3 failures = ~90 seconds of sustained failure before stopping agents.
+const estopDoltFailureThreshold = 3
+
 func (d *Daemon) ensureDoltServerRunning() {
 	if d.doltServer == nil || !d.doltServer.IsEnabled() {
 		return
@@ -809,6 +854,44 @@ func (d *Daemon) ensureDoltServerRunning() {
 
 	if err := d.doltServer.EnsureRunning(); err != nil {
 		d.logger.Printf("Error ensuring Dolt server is running: %v", err)
+	}
+
+	// Track Dolt health for auto E-stop.
+	// Use the health metrics snapshot to determine if Dolt is reachable.
+	h := doltserver.GetHealthMetrics(d.config.TownRoot)
+	if !h.Healthy {
+		if d.doltFailureCount == 0 {
+			d.doltFirstFailure = time.Now()
+		}
+		d.doltFailureCount++
+		d.logger.Printf("Dolt unhealthy (consecutive failures: %d)", d.doltFailureCount)
+
+		if d.doltFailureCount >= estopDoltFailureThreshold && !estop.IsActive(d.config.TownRoot) {
+			duration := time.Since(d.doltFirstFailure).Round(time.Second)
+			reason := fmt.Sprintf("dolt-unreachable for %s (%d consecutive failures)", duration, d.doltFailureCount)
+			d.logger.Printf("AUTO E-STOP: %s", reason)
+			if err := estop.Activate(d.config.TownRoot, estop.TriggerAuto, reason); err != nil {
+				d.logger.Printf("Failed to create ESTOP file: %v", err)
+			} else {
+				// Freeze all sessions immediately
+				d.freezeAgentSessions()
+			}
+		}
+	} else {
+		if d.doltFailureCount > 0 {
+			d.logger.Printf("Dolt recovered after %d consecutive failures", d.doltFailureCount)
+		}
+		d.doltFailureCount = 0
+		d.doltFirstFailure = time.Time{}
+
+		// Auto-resume: if Dolt recovered and E-stop was auto-triggered, clear it.
+		if estop.IsActive(d.config.TownRoot) {
+			if err := estop.Deactivate(d.config.TownRoot, true); err == nil {
+				d.logger.Println("AUTO RESUME: Dolt recovered, clearing auto E-stop")
+				d.thawAgentSessions()
+			}
+			// If Deactivate returns error, E-stop was manual — leave it alone.
+		}
 	}
 
 	// Option B throttling: pour mol-dog-doctor only on anomaly with cooldown.
@@ -821,7 +904,6 @@ func (d *Daemon) ensureDoltServerRunning() {
 
 	// Update OTel gauges with the latest Dolt health snapshot.
 	if d.metrics != nil {
-		h := doltserver.GetHealthMetrics(d.config.TownRoot)
 		d.metrics.updateDoltHealth(
 			int64(h.Connections),
 			int64(h.MaxConnections),
@@ -852,6 +934,100 @@ func (d *Daemon) pourDoctorMolecule(warnings []string) {
 	mol.closeStep("report")
 }
 
+
+// freezeAgentSessions sends SIGTSTP to all agent tmux sessions.
+// Mayor and overseer are exempt. Called during auto E-stop.
+func (d *Daemon) freezeAgentSessions() {
+	sessions, err := d.tmux.ListSessions()
+	if err != nil {
+		d.logger.Printf("E-STOP: failed to list sessions: %v", err)
+		return
+	}
+
+	exempt := map[string]bool{
+		session.MayorSessionName():    true,
+		session.OverseerSessionName(): true,
+	}
+
+	frozen := 0
+	for _, sess := range sessions {
+		if exempt[sess] {
+			continue
+		}
+		// Only freeze GT sessions (hq-* or rig-prefix-*)
+		if !strings.HasPrefix(sess, session.HQPrefix) {
+			// Check if it's a known rig prefix session
+			isRig := false
+			for _, rigName := range d.getRigNames() {
+				prefix := session.PrefixFor(rigName)
+				if strings.HasPrefix(sess, prefix+"-") || sess == prefix {
+					isRig = true
+					break
+				}
+			}
+			if !isRig {
+				continue
+			}
+		}
+
+		pid, err := d.tmux.GetPanePID(sess)
+		if err != nil {
+			continue
+		}
+		if err := exec.Command("kill", "-TSTP", pid).Run(); err == nil {
+			frozen++
+		}
+	}
+	d.logger.Printf("E-STOP: froze %d session(s)", frozen)
+}
+
+// thawAgentSessions sends SIGCONT to all agent tmux sessions and nudges them.
+// Called during auto-resume when Dolt recovers.
+func (d *Daemon) thawAgentSessions() {
+	sessions, err := d.tmux.ListSessions()
+	if err != nil {
+		d.logger.Printf("RESUME: failed to list sessions: %v", err)
+		return
+	}
+
+	thawed := 0
+	for _, sess := range sessions {
+		pid, err := d.tmux.GetPanePID(sess)
+		if err != nil {
+			continue
+		}
+		if err := exec.Command("kill", "-CONT", pid).Run(); err == nil {
+			thawed++
+			// Nudge the session to alert it that work can continue
+			_ = d.tmux.NudgeSession(sess, "E-stop cleared. Dolt recovered. Work may resume.")
+		}
+	}
+	d.logger.Printf("RESUME: thawed %d session(s)", thawed)
+}
+
+// getRigNames returns all known rig names. Used by freeze/thaw for session filtering.
+func (d *Daemon) getRigNames() []string {
+	entries, err := os.ReadDir(d.config.TownRoot)
+	if err != nil {
+		return nil
+	}
+	var rigs []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == "mayor" || name == "daemon" || name == "deacon" ||
+			name == ".git" || name == "docs" || name[0] == '.' {
+			continue
+		}
+		// Check for rig markers
+		if _, err := os.Stat(filepath.Join(d.config.TownRoot, name, "mayor")); err == nil {
+			rigs = append(rigs, name)
+		}
+	}
+	return rigs
+}
 
 // checkAllRigsDolt verifies all rigs are using the Dolt backend.
 func (d *Daemon) checkAllRigsDolt() error {
@@ -1106,8 +1282,8 @@ func (d *Daemon) checkDeaconHeartbeat() {
 
 	age := hb.Age()
 
-	// If heartbeat is fresh, nothing to do
-	if !hb.IsVeryStale() {
+	// If heartbeat is fresh (< 5 min), nothing to do
+	if hb.IsFresh() {
 		return
 	}
 
@@ -1126,14 +1302,19 @@ func (d *Daemon) checkDeaconHeartbeat() {
 		return
 	}
 
-	// Session exists but heartbeat is stale - Deacon is stuck
-	// PATCH-002: Reduced from 30m to 10m for faster recovery.
-	// Must be > backoff-max (5m) to avoid false positive kills during legitimate sleep.
-	if age > 10*time.Minute {
+	// Session exists but heartbeat is stale - Deacon may be stuck.
+	// gt-p7k: Use two-tier response — nudge for stale (5-15 min),
+	// kill only for very stale (>= 15 min). The previous logic gated on
+	// IsVeryStale() (>= 15 min) then checked age > 10 min, making the
+	// nudge path unreachable (dead code). Now nudge fires for 5-15 min
+	// staleness, giving the Deacon a chance to respond before killing.
+	// Kill threshold must be > backoff-max (5m) to avoid false positive
+	// kills during legitimate await-signal sleep.
+	if hb.IsVeryStale() {
 		// Detection only: stuck-agent-dog plugin handles context-aware restart
 		d.logger.Printf("STUCK DEACON: heartbeat stale for %s, session %s needs restart", age.Round(time.Minute), sessionName)
 	} else {
-		// Stuck but not critically - nudge to wake up
+		// Stale but not very stale (5-15 min) - nudge to wake up
 		d.logger.Printf("Deacon stuck for %s - nudging session", age.Round(time.Minute))
 		if err := d.tmux.NudgeSession(sessionName, "HEALTH_CHECK: heartbeat stale, respond to confirm responsiveness"); err != nil {
 			d.logger.Printf("Error nudging stuck Deacon: %v", err)
@@ -1275,20 +1456,52 @@ func (d *Daemon) ensureRefineryRunning(rigName string) {
 }
 
 // ensureMayorRunning ensures the Mayor is running.
-// Uses mayor.Manager for consistent startup behavior (zombie detection, GUPP, etc.).
+// Uses mayor.Manager for consistent startup behavior.
+// If the tmux session exists but the agent is dead (zombie), the daemon
+// stops the zombie session and starts a fresh one.
 func (d *Daemon) ensureMayorRunning() {
 	mgr := mayor.NewManager(d.config.TownRoot)
 
 	if err := mgr.Start(""); err != nil {
 		if err == mayor.ErrAlreadyRunning {
-			// Mayor is running - nothing to do
+			// Session exists — verify agent is actually alive.
+			// During handoffs the agent is briefly undetectable, so we
+			// only restart if the session has been a zombie for multiple
+			// consecutive patrol cycles (debounce).
+			if !d.isMayorAgentAlive(mgr) {
+				d.mayorZombieCount++
+				if d.mayorZombieCount >= 3 {
+					d.logger.Printf("Mayor zombie detected (%d cycles), restarting", d.mayorZombieCount)
+					if stopErr := mgr.Stop(); stopErr != nil && stopErr != mayor.ErrNotRunning {
+						d.logger.Printf("Error stopping zombie Mayor: %v", stopErr)
+						return
+					}
+					d.mayorZombieCount = 0
+					if startErr := mgr.Start(""); startErr != nil {
+						d.logger.Printf("Error restarting Mayor after zombie cleanup: %v", startErr)
+						return
+					}
+					d.logger.Println("Mayor restarted after zombie cleanup")
+				} else {
+					d.logger.Printf("Mayor agent not detected (cycle %d/3), waiting before restart", d.mayorZombieCount)
+				}
+			} else {
+				d.mayorZombieCount = 0
+			}
 			return
 		}
 		d.logger.Printf("Error starting Mayor: %v", err)
 		return
 	}
 
+	d.mayorZombieCount = 0
 	d.logger.Println("Mayor started successfully")
+}
+
+// isMayorAgentAlive checks if the Mayor's agent process is running in tmux.
+func (d *Daemon) isMayorAgentAlive(mgr *mayor.Manager) bool {
+	t := tmux.NewTmux()
+	return t.IsAgentAlive(mgr.SessionName())
 }
 
 // killDeaconSessions kills leftover deacon and boot tmux sessions.
