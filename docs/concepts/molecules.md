@@ -12,7 +12,7 @@ Protomolecule (frozen template) ─── Solid
     │
     ├─▶ bd mol pour ──▶ Mol (persistent) ─── Liquid
     │
-    └─▶ bd mol wisp --root-only ──▶ Root Wisp (ephemeral) ─── Vapor
+    └─▶ bd mol wisp ──▶ Wisp (ephemeral) ─── Vapor
 ```
 
 **Root-only wisps** (default): Formula steps are NOT materialized as database rows.
