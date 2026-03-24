@@ -1,0 +1,428 @@
+description = """
+PR Sheriff patrol: triage inbound PRs and track outbound fix-merge PRs.
+
+The PR Sheriff is responsible for two directions of PR flow:
+
+1. **Inbound triage**: Discover open PRs from community contributors, categorize
+   them (EASY-WIN / NEEDS-CREW / NEEDS-HUMAN / SKIP), and dispatch accordingly.
+
+2. **Outbound tracking**: Monitor PRs we submitted to upstream repos (fix-merge PRs),
+   track CI status, surface maintainer feedback, detect merge/close events, and
+   route rework requests back to crew.
+
+## Repo Scope
+
+Each rig has a configured scope (e.g., gastown handles steveyegge/gastown).
+Load the scope from `$GT_ROOT/.beads/pr-sheriff-config.json` and filter to
+only repos assigned to your rig.
+
+## Output Rules
+
+- All output is printed inline. Do NOT post comments to GitHub.
+- The overseer decides what gets posted externally.
+- Contributor-friendly: help contributors get to the finish line.
+- Use `Co-authored-by` trailer when fixing up contributor work.
+
+## Ephemeral Dispatch
+
+When creating beads for PR work (reviews, fix-merge tasks), use ephemeral beads:
+```bash
+bd new -t task "..." -p 2 -l pr-review --wisp-type patrol
+```
+This avoids polluting the permanent ledger with orchestration scaffolding."""
+formula = "mol-pr-sheriff-patrol"
+version = 1
+
+[vars]
+[vars.rig_scope]
+description = "Repos this rig is responsible for (loaded from config)"
+required = false
+
+[vars.outbound_author]
+description = "GitHub username for outbound PR queries (e.g., outdoorsea)"
+required = false
+
+# ─── INBOUND TRIAGE ───────────────────────────────────────────────────────────
+
+[[steps]]
+id = "load-config"
+title = "Load config and establish scope"
+description = """
+Load the PR sheriff configuration and establish which repos to scan.
+
+**1. Load config:**
+```bash
+cat $GT_ROOT/.beads/pr-sheriff-config.json
+```
+
+If config doesn't exist, use defaults:
+- Repo scope: detect from `git remote -v` (upstream remote)
+- Outbound author: detect from `git remote -v` (origin remote's org/user)
+- Contributor tiers: all community (no firewalled, no bot-trusted)
+
+**2. Establish repo scope:**
+Filter the config's repo list to only repos assigned to this rig.
+
+**3. Establish outbound author:**
+The outbound author is the GitHub user/org that submits fix-merge PRs
+to upstream repos. Typically the fork owner (e.g., `outdoorsea`).
+
+```bash
+# Auto-detect from origin remote if not in config
+ORIGIN=$(git remote get-url origin 2>/dev/null \
+  | sed -E 's|.*github\\.com[:/]||; s|/.*||')
+```
+
+**4. Load contributor policy tiers:**
+| Tier | Handling |
+|------|----------|
+| bot-trusted | Auto-merge if CI passes (e.g., dependabot) |
+| community | Normal triage — easy-win / crew / deep review |
+| firewalled | Always NEEDS-HUMAN, never auto-merge |
+
+**Exit criteria:** Config loaded, repo scope established, outbound author known."""
+
+[[steps]]
+id = "discover-prs"
+title = "Discover open inbound PRs"
+needs = ["load-config"]
+description = """
+Find all open PRs needing review across scoped repos.
+
+For each repo in scope:
+```bash
+gh pr list --repo <owner/repo> --state open \
+  --json number,title,author,additions,deletions,mergeable,statusCheckRollup,url,updatedAt,isDraft,reviewDecision \
+  --limit 100
+```
+
+**Filter out:**
+- PRs authored by the outbound author (those are OUR outbound PRs, handled later)
+- PRs already reviewed and approved (reviewDecision = APPROVED)
+
+**Collect into a single list** for batch triage in the next step.
+
+**Exit criteria:** Complete list of inbound PRs needing attention."""
+
+[[steps]]
+id = "triage-batch"
+title = "Categorize all inbound PRs in one pass"
+needs = ["discover-prs"]
+description = """
+Apply the decision tree to each inbound PR. Processing all PRs in one pass
+preserves cross-PR context (e.g., same contributor with multiple PRs).
+
+**Decision tree:**
+```
+Draft? → SKIP
+Contributor firewalled? → NEEDS-HUMAN (deep review)
+Dependabot patch bump + CI green? → EASY-WIN
+<50 lines, obvious bug/doc/test fix? → EASY-WIN
+Security/architecture/API change? → NEEDS-HUMAN
+Multi-concern PR? → NEEDS-HUMAN
+100+ lines new feature? → NEEDS-CREW or NEEDS-HUMAN
+Everything else → NEEDS-CREW
+```
+
+**Output format for each PR:**
+```
+### PR #<num>: <title>
+Author: <login> | +<additions>/-<deletions> | <changedFiles> files
+
+**Category**: EASY-WIN | NEEDS-CREW | NEEDS-HUMAN | SKIP
+
+**Analysis**:
+<1-3 sentences explaining the change and why it fits this category>
+
+**Recommendation**:
+<specific action>
+```
+
+**Exit criteria:** All inbound PRs categorized with recommendations."""
+
+[[steps]]
+id = "merge-easy-wins"
+title = "Merge approved easy-wins"
+needs = ["triage-batch"]
+description = """
+For each EASY-WIN PR that has CI passing and is mergeable:
+
+```bash
+gh pr merge <number> --repo <owner/repo> --squash --auto
+```
+
+If merge fails (conflicts, CI not ready), downgrade to NEEDS-CREW.
+
+**Bot-trusted PRs** (e.g., dependabot): Auto-merge without additional review
+if CI passes and changes are patch-level.
+
+**Exit criteria:** All eligible easy-wins merged or downgraded."""
+
+[[steps]]
+id = "dispatch-crew-reviews"
+title = "Dispatch NEEDS-CREW PRs to crew"
+needs = ["merge-easy-wins"]
+description = """
+For each NEEDS-CREW PR, create an ephemeral bead and nudge the assigned crew member.
+
+```bash
+bd new -t task "Review PR #<num>: <title>" -p 2 -l pr-review \
+  --wisp-type patrol
+
+gt nudge <rig>/crew/<assigned> "PR #<num> needs review: <1-line summary>"
+```
+
+Assignment is based on crew mappings in the config (expertise areas, load balancing).
+
+**Exit criteria:** All NEEDS-CREW PRs dispatched."""
+
+[[steps]]
+id = "dispatch-deep-reviews"
+title = "Dispatch NEEDS-HUMAN PRs for deep review"
+needs = ["dispatch-crew-reviews"]
+description = """
+For each NEEDS-HUMAN PR, dispatch to crew with the deep review formula
+(mol-pr-deep-review) which applies the six-lens evaluation framework:
+
+1. Plugin/integration fit
+2. Tech-debt weight
+3. Contributor track record
+4. ZFC compliance
+5. Problem validity + solution fit
+6. Splitability
+
+```bash
+bd new -t task "Deep review PR #<num>: <title>" -p 1 -l pr-review,deep-review \
+  --wisp-type patrol
+
+gt nudge <rig>/crew/<assigned> "PR #<num> needs deep review: <reason>"
+```
+
+**Exit criteria:** All NEEDS-HUMAN PRs dispatched for deep review."""
+
+# ─── OUTBOUND TRACKING ────────────────────────────────────────────────────────
+
+[[steps]]
+id = "discover-outbound-prs"
+title = "Discover our outbound fix-merge PRs"
+needs = ["load-config"]
+description = """
+Find all open PRs we submitted to upstream repos.
+
+For each upstream repo in scope:
+```bash
+gh pr list --author <outbound_author> --repo <upstream_owner/repo> --state open \
+  --json number,title,url,createdAt,updatedAt,statusCheckRollup,reviewDecision,reviewRequests,mergeable,state \
+  --limit 50
+```
+
+Also check recently closed/merged PRs to detect state changes since last patrol:
+```bash
+gh pr list --author <outbound_author> --repo <upstream_owner/repo> --state closed \
+  --json number,title,url,closedAt,mergedAt,mergeCommit,state \
+  --limit 20
+```
+
+**Collect all outbound PRs** with their current state for analysis.
+
+**Exit criteria:** Complete inventory of our outbound PRs (open + recently closed)."""
+
+[[steps]]
+id = "check-outbound-ci"
+title = "Check CI status on outbound PRs"
+needs = ["discover-outbound-prs"]
+description = """
+For each open outbound PR, check CI status.
+
+```bash
+gh pr checks <number> --repo <upstream_owner/repo>
+```
+
+**Categorize CI status:**
+
+| Status | Action |
+|--------|--------|
+| All passing | No action — PR is healthy |
+| Pending | Note — CI still running |
+| Failing (our code) | Route to crew for fix (see dispatch step) |
+| Failing (flaky/infra) | Note — may need re-run or comment |
+
+**For CI failures, diagnose cause:**
+```bash
+gh pr view <number> --repo <upstream_owner/repo> \
+  --json statusCheckRollup \
+  --jq '.statusCheckRollup[] | select(.conclusion == "FAILURE") | {name: .name, url: .detailsUrl}'
+```
+
+Classify failures as:
+- **Our fault**: test/lint/build failures from our changes → dispatch fix
+- **Upstream flaky**: known flaky tests unrelated to our changes → note, consider re-run
+- **Infra**: CI infrastructure issues → note, wait
+
+**Output format:**
+```
+### Outbound PR #<num>: <title> (<upstream_repo>)
+CI Status: PASSING | PENDING | FAILING
+Failing checks: <list if any>
+Diagnosis: our-fault | upstream-flaky | infra
+Action: none | dispatch-fix | wait | re-run
+```
+
+**Exit criteria:** CI status assessed for all outbound PRs."""
+
+[[steps]]
+id = "check-outbound-reviews"
+title = "Check maintainer feedback on outbound PRs"
+needs = ["discover-outbound-prs"]
+description = """
+For each open outbound PR, check for maintainer review comments and decisions.
+
+```bash
+gh pr view <number> --repo <upstream_owner/repo> \
+  --json reviews,comments,reviewDecision \
+  --jq '{decision: .reviewDecision, reviews: [.reviews[] | {author: .author.login, state: .state, body: .body}], comments: [.comments[] | {author: .author.login, body: .body, createdAt: .createdAt}]}'
+```
+
+**Categorize review state:**
+
+| State | Action |
+|-------|--------|
+| APPROVED | Ready to merge (maintainer will merge) — note in summary |
+| CHANGES_REQUESTED | Route to crew for rework |
+| COMMENTED | Surface comments for crew awareness |
+| No reviews yet | Note age — if stale (>7 days), consider polite ping |
+| DISMISSED | Re-assess situation |
+
+**For CHANGES_REQUESTED, extract actionable items:**
+- What specific changes are requested?
+- Are they trivial (naming, style) or substantial (design, approach)?
+- Can they be addressed quickly or need significant rework?
+
+**Output format:**
+```
+### Outbound PR #<num>: <title> (<upstream_repo>)
+Review Status: APPROVED | CHANGES_REQUESTED | COMMENTED | PENDING
+Last activity: <date>
+Maintainer feedback: <summary of comments/reviews>
+Action: none | dispatch-rework | surface-comments | consider-ping
+```
+
+**Exit criteria:** Review status assessed for all outbound PRs."""
+
+[[steps]]
+id = "check-outbound-merged-closed"
+title = "Detect merged or closed outbound PRs"
+needs = ["discover-outbound-prs"]
+description = """
+Check recently closed/merged outbound PRs to update our records.
+
+**For merged PRs:**
+The fix landed upstream. Update the corresponding tracking records:
+1. Identify the original community PR or issue that triggered our fix-merge
+2. Close our tracking bead if one exists
+3. Note the merge commit SHA for the ledger
+4. If the original community PR is still open, close it with a comment
+   pointing to the merged fix (overseer decides on external posting)
+
+```bash
+# For each merged PR:
+gh pr view <number> --repo <upstream_owner/repo> \
+  --json mergedAt,mergeCommit,title
+```
+
+**For closed-without-merge PRs:**
+The maintainer rejected our fix. Flag for review:
+1. Why was it closed? Check for closing comments
+2. Should we rework and resubmit?
+3. Should we close the original issue as won't-fix?
+
+```bash
+# Check closing context:
+gh pr view <number> --repo <upstream_owner/repo> \
+  --json comments,closedAt \
+  --jq '{closedAt: .closedAt, comments: [.comments[-3:][] | {author: .author.login, body: .body}]}'
+```
+
+**Output format:**
+```
+### Outbound PR #<num>: <title> (<upstream_repo>) — MERGED/CLOSED
+Merged at: <date> | Closed at: <date>
+Merge commit: <sha> (if merged)
+Original issue: <reference if known>
+Action: update-ledger | flag-for-review | close-original | rework-and-resubmit
+```
+
+**Exit criteria:** All merged/closed outbound PRs accounted for."""
+
+[[steps]]
+id = "dispatch-outbound-fixes"
+title = "Dispatch rework for failing/rejected outbound PRs"
+needs = ["check-outbound-ci", "check-outbound-reviews", "check-outbound-merged-closed"]
+description = """
+For outbound PRs that need action, dispatch work to crew or polecats.
+
+**CI failures (our fault):**
+```bash
+bd new -t task "Fix CI on outbound PR #<num>: <failure-summary>" -p 2 \
+  -l pr-review,outbound-fix,ci-fix --wisp-type patrol
+
+gt nudge <rig>/crew/<assigned> "Outbound PR #<num> CI failing: <1-line summary>. Please fix."
+```
+
+**Changes requested by maintainer:**
+```bash
+bd new -t task "Rework outbound PR #<num>: <requested-changes>" -p 2 \
+  -l pr-review,outbound-rework --wisp-type patrol
+
+gt nudge <rig>/crew/<assigned> "Outbound PR #<num> needs rework: <maintainer feedback summary>"
+```
+
+**Closed without merge (needs review):**
+```bash
+bd new -t task "Review rejected outbound PR #<num>: <close-reason>" -p 3 \
+  -l pr-review,outbound-rejected --wisp-type patrol
+
+gt nudge <rig>/crew/<assigned> "Outbound PR #<num> was closed by maintainer. Review needed: <context>"
+```
+
+**Stale PRs (>7 days, no review):**
+Surface to crew for awareness. Consider posting a polite follow-up comment
+(overseer decides on external posting).
+
+**Exit criteria:** All outbound PRs needing action dispatched."""
+
+# ─── SUMMARY ──────────────────────────────────────────────────────────────────
+
+[[steps]]
+id = "summarize"
+title = "Print patrol summary"
+needs = ["merge-easy-wins", "dispatch-crew-reviews", "dispatch-deep-reviews", "dispatch-outbound-fixes"]
+description = """
+Print a comprehensive patrol summary covering both inbound and outbound PRs.
+
+**Summary format:**
+```
+## PR Sheriff Patrol Summary — <date>
+
+### Inbound PRs (community → us)
+**Easy-wins merged**: N
+**Dispatched to crew**: N
+**Dispatched for deep review**: N
+**Skipped (drafts)**: N
+
+### Outbound PRs (us → upstream)
+**Healthy (CI passing, awaiting review)**: N
+**CI failing — fixes dispatched**: N
+**Changes requested — rework dispatched**: N
+**Merged upstream**: N
+**Closed without merge — flagged**: N
+**Stale (>7 days, no activity)**: N
+
+### Actions taken
+- Merged: PR #X, PR #Y (easy-wins)
+- Dispatched fix: PR #Z (CI failure on <upstream>)
+- Dispatched rework: PR #W (maintainer requested <change>)
+- Updated ledger: PR #V merged to <upstream>
+```
+
+**Exit criteria:** Summary printed. Patrol complete."""
