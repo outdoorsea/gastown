@@ -80,3 +80,4 @@
 {"time":"2026-03-25T12:30:50.674491-07:00","level":"ERROR","msg":"retention: purge events","err":"delete events: Error 1105 (HY000): column \"received_at\" could not be found in any table in scope"}
 {"time":"2026-03-25T12:30:50.695763-07:00","level":"ERROR","msg":"process store event","err":"insert event: Error 1054 (HY000): Unknown column 'project_id' in 'events'","event_id":"33d530d3-67de-4005-87f2-8eb670e57858"}
 {"time":"2026-03-25T12:31:50.70186-07:00","level":"INFO","msg":"dolt commit","writes":1}
+{"time":"2026-03-25T13:23:50.76965-07:00","level":"INFO","msg":"dolt commit","writes":1}
