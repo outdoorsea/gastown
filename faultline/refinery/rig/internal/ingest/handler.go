@@ -134,6 +134,10 @@ func (h *Handler) authenticateRequest(r *http.Request) (int64, error) {
 }
 
 func (h *Handler) processEvent(ctx context.Context, projectID int64, eventID string, raw json.RawMessage) error {
+	if !json.Valid(raw) {
+		return fmt.Errorf("invalid JSON payload for event %s", eventID)
+	}
+
 	// Extract event metadata.
 	var meta struct {
 		Timestamp   interface{} `json:"timestamp"`

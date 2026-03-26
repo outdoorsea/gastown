@@ -137,6 +137,34 @@ func TestProcessEvent_ScrubPII_Integration(t *testing.T) {
 	}
 }
 
+func TestProcessEvent_InvalidJSON(t *testing.T) {
+	d := openHandlerTestDB(t)
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+
+	h := &Handler{
+		DB:  d,
+		Log: log,
+	}
+
+	// Invalid JSON should be rejected, not stored as "Unparseable event".
+	payload := json.RawMessage(`{not valid json`)
+	err := h.processEvent(ctx, 1, "dead0000-0000-0000-0000-000000000000", payload)
+	if err == nil {
+		t.Fatal("processEvent should return error for invalid JSON")
+	}
+	if !strings.Contains(err.Error(), "invalid JSON") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Verify no "Unparseable event" issue group was created.
+	var count int
+	d.QueryRowContext(ctx, `SELECT COUNT(*) FROM issue_groups WHERE title = 'Unparseable event'`).Scan(&count)
+	if count > 0 {
+		t.Error("invalid JSON payload should not create an 'Unparseable event' issue group")
+	}
+}
+
 func TestProcessEvent_NoScrub_Integration(t *testing.T) {
 	d := openHandlerTestDB(t)
 	ctx := context.Background()
