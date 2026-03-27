@@ -451,6 +451,7 @@ type AgentFieldUpdates struct {
 	ActiveMR          *string
 	NotificationLevel *string
 	Mode              *string
+	HookBead          *string // Clear hook_bead on completion (gt-qbh)
 	// Completion metadata fields (gt-x7t9)
 	ExitType       *string
 	MRID           *string
@@ -502,6 +503,9 @@ func (b *Beads) UpdateAgentDescriptionFields(id string, updates AgentFieldUpdate
 	}
 	if updates.Mode != nil {
 		fields.Mode = *updates.Mode
+	}
+	if updates.HookBead != nil {
+		fields.HookBead = *updates.HookBead
 	}
 	// Completion metadata fields (gt-x7t9)
 	if updates.ExitType != nil {
