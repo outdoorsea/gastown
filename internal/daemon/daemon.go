@@ -113,11 +113,17 @@ type Daemon struct {
 	mayorZombieCount int
 
 	// doltFailureCount tracks consecutive heartbeats where Dolt is unreachable.
-	// When this exceeds estopDoltFailureThreshold, an automatic E-stop is triggered.
+	// When this exceeds the configured threshold, an automatic E-stop is triggered.
 	// Only accessed from heartbeat loop goroutine - no sync needed.
 	doltFailureCount int
 	// doltFirstFailure records when the current failure streak started.
 	doltFirstFailure time.Time
+	// lastAutoEstop records when the last auto E-stop was triggered (cooldown).
+	lastAutoEstop time.Time
+	// lastDiskCheck records when disk usage was last checked.
+	lastDiskCheck time.Time
+	// estopAutoConfig cached from patrol config at startup.
+	estopAutoConfig *EstopAutoTriggerConfig
 }
 
 // sessionDeath records a detected session death for mass death analysis.
@@ -290,6 +296,14 @@ func New(config *Config) (*Daemon, error) {
 		}
 	}
 
+	// Load estop auto-trigger config (gt-qzx).
+	var estopCfg *EstopAutoTriggerConfig
+	if patrolConfig != nil && patrolConfig.Patrols != nil && patrolConfig.Patrols.EstopAutoTrigger != nil {
+		estopCfg = patrolConfig.Patrols.EstopAutoTrigger
+		logger.Printf("Estop auto-trigger config: threshold=%d, cooldown=%s, disk=%d%%",
+			estopCfg.GetDoltFailureThreshold(), estopCfg.GetCooldown(), estopCfg.GetDiskUsagePercent())
+	}
+
 	return &Daemon{
 		config:          config,
 		patrolConfig:    patrolConfig,
@@ -304,6 +318,7 @@ func New(config *Config) (*Daemon, error) {
 		restartTracker:  restartTracker,
 		otelProvider:    otelProvider,
 		metrics:         dm,
+		estopAutoConfig: estopCfg,
 	}, nil
 }
 
@@ -861,11 +876,6 @@ func (d *Daemon) rotateOversizedLogs() {
 // This provides the backend for beads database access in server mode.
 // Option B throttling: pours a mol-dog-doctor molecule only when health check
 // warnings are detected, with a 5-minute cooldown to avoid wisp spam.
-// estopDoltFailureThreshold is the number of consecutive heartbeats with Dolt
-// unreachable before auto-triggering an E-stop. At 30s heartbeat interval,
-// 3 failures = ~90 seconds of sustained failure before stopping agents.
-const estopDoltFailureThreshold = 3
-
 func (d *Daemon) ensureDoltServerRunning() {
 	if d.doltServer == nil || !d.doltServer.IsEnabled() {
 		return
@@ -878,6 +888,7 @@ func (d *Daemon) ensureDoltServerRunning() {
 	// Track Dolt health for auto E-stop.
 	// Use the health metrics snapshot to determine if Dolt is reachable.
 	h := doltserver.GetHealthMetrics(d.config.TownRoot)
+	cfg := d.estopAutoConfig
 	if !h.Healthy {
 		if d.doltFailureCount == 0 {
 			d.doltFirstFailure = time.Now()
@@ -885,14 +896,19 @@ func (d *Daemon) ensureDoltServerRunning() {
 		d.doltFailureCount++
 		d.logger.Printf("Dolt unhealthy (consecutive failures: %d)", d.doltFailureCount)
 
-		if d.doltFailureCount >= estopDoltFailureThreshold && !estop.IsActive(d.config.TownRoot) {
+		threshold := cfg.GetDoltFailureThreshold()
+		if cfg.IsEnabled() &&
+			d.doltFailureCount >= threshold &&
+			!estop.IsActive(d.config.TownRoot) &&
+			time.Since(d.lastAutoEstop) >= cfg.GetCooldown() {
+
 			duration := time.Since(d.doltFirstFailure).Round(time.Second)
 			reason := fmt.Sprintf("dolt-unreachable for %s (%d consecutive failures)", duration, d.doltFailureCount)
 			d.logger.Printf("AUTO E-STOP: %s", reason)
 			if err := estop.Activate(d.config.TownRoot, estop.TriggerAuto, reason); err != nil {
 				d.logger.Printf("Failed to create ESTOP file: %v", err)
 			} else {
-				// Freeze all sessions immediately
+				d.lastAutoEstop = time.Now()
 				d.freezeAgentSessions()
 			}
 		}
@@ -912,6 +928,9 @@ func (d *Daemon) ensureDoltServerRunning() {
 			// If Deactivate returns error, E-stop was manual — leave it alone.
 		}
 	}
+
+	// Disk usage auto-trigger (gt-qzx).
+	d.checkDiskUsage(cfg)
 
 	// Option B throttling: pour mol-dog-doctor only on anomaly with cooldown.
 	if warnings := d.doltServer.LastWarnings(); len(warnings) > 0 {
@@ -953,6 +972,61 @@ func (d *Daemon) pourDoctorMolecule(warnings []string) {
 	mol.closeStep("report")
 }
 
+
+// checkDiskUsage triggers auto E-stop when disk usage exceeds the configured threshold.
+// Checked at most every 60s (configurable via disk_check_interval).
+func (d *Daemon) checkDiskUsage(cfg *EstopAutoTriggerConfig) {
+	threshold := cfg.GetDiskUsagePercent()
+	if threshold == 0 || !cfg.IsEnabled() {
+		return
+	}
+
+	// Rate limit disk checks.
+	checkInterval := 60 * time.Second
+	if cfg != nil && cfg.DiskCheckInterval != "" {
+		if parsed, err := time.ParseDuration(cfg.DiskCheckInterval); err == nil {
+			checkInterval = parsed
+		}
+	}
+	if time.Since(d.lastDiskCheck) < checkInterval {
+		return
+	}
+	d.lastDiskCheck = time.Now()
+
+	usage := getDiskUsagePercent(d.config.TownRoot)
+	if usage < 0 {
+		return // couldn't determine disk usage
+	}
+
+	if usage >= threshold && !estop.IsActive(d.config.TownRoot) &&
+		time.Since(d.lastAutoEstop) >= cfg.GetCooldown() {
+
+		reason := fmt.Sprintf("disk-usage at %d%% (threshold: %d%%)", usage, threshold)
+		d.logger.Printf("AUTO E-STOP: %s", reason)
+		if err := estop.Activate(d.config.TownRoot, estop.TriggerAuto, reason); err != nil {
+			d.logger.Printf("Failed to create ESTOP file: %v", err)
+		} else {
+			d.lastAutoEstop = time.Now()
+			d.freezeAgentSessions()
+		}
+	}
+}
+
+// getDiskUsagePercent returns the disk usage percentage for the filesystem
+// containing the given path. Returns -1 on error.
+func getDiskUsagePercent(path string) int {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return -1
+	}
+	total := stat.Blocks * uint64(stat.Bsize)
+	free := stat.Bavail * uint64(stat.Bsize)
+	if total == 0 {
+		return -1
+	}
+	used := total - free
+	return int(used * 100 / total)
+}
 
 // freezeAgentSessions sends SIGTSTP to all agent tmux sessions.
 // Mayor and overseer are exempt. Called during auto E-stop.
